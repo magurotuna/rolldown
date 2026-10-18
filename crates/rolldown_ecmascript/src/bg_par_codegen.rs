@@ -54,9 +54,29 @@ pub fn par_codegen<'a>(
   } else if k < 2 || n < 4 * k {
     return None;
   }
-  if n < 2 {
+  if n < 2 || !options.minify {
+    // Only the whitespace-free output is split: indentation and newlines carry state across
+    // statements otherwise.
     return None;
   }
+  // A part must not start right after a comment: codegen decides the separator before a comment
+  // from what it printed last. Allowed cut before statement `i` only if no comment is attached
+  // between the end of `i - 1` and the start of `i`.
+  let comments_printed = options.comments != oxc::codegen::CommentOptions::disabled();
+  let comment_positions: Vec<u32> = if comments_printed {
+    program.comments.iter().map(|c| c.attached_to).collect()
+  } else {
+    Vec::new()
+  };
+  let can_cut = |i: usize| -> bool {
+    if !comments_printed {
+      return true;
+    }
+    let lo = program.body[i - 1].span().end;
+    let hi = program.body[i].span().start;
+    let idx = comment_positions.partition_point(|&p| p < lo);
+    !(idx < comment_positions.len() && comment_positions[idx] <= hi)
+  };
   // Cut points by source size of the statements.
   let weights: Vec<u64> =
     program.body.iter().map(|s| u64::from((s.span().size()).max(1))).collect();
@@ -66,11 +86,14 @@ pub fn par_codegen<'a>(
   for (i, w) in weights.iter().enumerate() {
     acc += w;
     let next = cuts.len() as u64;
-    if i + 1 < n && acc * (k as u64) >= total * next && (cuts.len() as usize) < k {
+    if i + 1 < n && acc * (k as u64) >= total * next && (cuts.len() as usize) < k && can_cut(i + 1) {
       cuts.push(i + 1);
     }
   }
   cuts.push(n);
+  if cuts.len() < 3 {
+    return None;
+  }
   let starts: Vec<u32> = cuts.iter().map(|&c| if c < n { program.body[c].span().start } else { u32::MAX }).collect();
 
   let builder = AstBuilder::new(allocator);
