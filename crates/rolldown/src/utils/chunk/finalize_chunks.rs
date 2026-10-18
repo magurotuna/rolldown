@@ -32,7 +32,7 @@ use crate::{
   chunk_graph::ChunkGraph,
   stages::link_stage::LinkStageOutput,
   type_alias::{AssetVec, IndexChunkToInstances, IndexInstantiatedChunks},
-  utils::process_code_and_sourcemap::{emit_sourcemap, prepare_sourcemap},
+  utils::process_code_and_sourcemap::{emit_sourcemap_with_json, prepare_sourcemap},
 };
 
 #[tracing::instrument(level = "debug", skip_all)]
@@ -239,17 +239,43 @@ async fn finalize_sourcemaps(
   options: &NormalizedBundlerOptions,
   hash_base: u8,
 ) -> BuildResult<()> {
-  try_join_all(assets.iter_mut().map(async |asset| {
-    let filename = asset.filename.clone();
-    if let (InstantiationKind::Ecma(ecma_meta), Some(map)) = (&mut asset.meta, asset.map.as_mut()) {
-      let file_path = options.cwd.as_path().join(&options.out_dir).join(filename.as_str());
-      ecma_meta.file_dir =
-        file_path.parent().expect("chunk file name should have a parent").to_path_buf();
-      prepare_sourcemap(options, map, &ecma_meta.file_dir, filename.as_str()).await?;
-    }
-    Ok::<(), anyhow::Error>(())
-  }))
-  .await?;
+  let bg_par = rolldown_utils::bg_flag!("RD_BG_PAR_SOURCEMAP");
+  let bg_static = bg_par
+    && !cfg!(windows)
+    && options.sourcemap_path_transform.is_none()
+    && !matches!(options.sourcemap_ignore_list, Some(rolldown_common::SourceMapIgnoreList::Fn(_)));
+  if bg_static {
+    // perf/bun-gap B4 (PoC): no JS callback involved, so prepare every map in parallel.
+    assets.par_iter_mut().for_each(|asset| {
+      let filename = asset.filename.clone();
+      if let (InstantiationKind::Ecma(ecma_meta), Some(map)) = (&mut asset.meta, asset.map.as_mut())
+      {
+        let file_path = options.cwd.as_path().join(&options.out_dir).join(filename.as_str());
+        ecma_meta.file_dir =
+          file_path.parent().expect("chunk file name should have a parent").to_path_buf();
+        let applied = crate::utils::process_code_and_sourcemap::bg_prepare_sourcemap_static(
+          options,
+          map,
+          &ecma_meta.file_dir,
+          filename.as_str(),
+        );
+        debug_assert!(applied);
+      }
+    });
+  } else {
+    try_join_all(assets.iter_mut().map(async |asset| {
+      let filename = asset.filename.clone();
+      if let (InstantiationKind::Ecma(ecma_meta), Some(map)) = (&mut asset.meta, asset.map.as_mut())
+      {
+        let file_path = options.cwd.as_path().join(&options.out_dir).join(filename.as_str());
+        ecma_meta.file_dir =
+          file_path.parent().expect("chunk file name should have a parent").to_path_buf();
+        prepare_sourcemap(options, map, &ecma_meta.file_dir, filename.as_str()).await?;
+      }
+      Ok::<(), anyhow::Error>(())
+    }))
+    .await?;
+  }
 
   // Inline sourcemaps also resolve `[hash]`: the name is still reported on the output chunk
   // even though no `.map` asset is written.
@@ -272,8 +298,23 @@ async fn finalize_sourcemaps(
     }
   });
 
+  // perf/bun-gap B4 (PoC): serialize the maps in parallel up front (the loop below is serial).
+  let mut bg_jsons: Vec<Option<String>> = if bg_par
+    && !options.sourcemap_debug_ids
+    && matches!(options.sourcemap, Some(SourceMapType::File | SourceMapType::Hidden))
+  {
+    assets
+      .par_iter()
+      .map(|asset| match (&asset.meta, &asset.map) {
+        (InstantiationKind::Ecma(_), Some(map)) => Some(map.to_json_string()),
+        _ => None,
+      })
+      .collect()
+  } else {
+    Vec::new()
+  };
   let mut derived_assets = Vec::new();
-  for asset in assets.iter_mut() {
+  for (bg_index, asset) in assets.iter_mut().enumerate() {
     match &mut asset.meta {
       InstantiationKind::Ecma(ecma_meta) => {
         let asset_code = mem::take(&mut asset.content);
@@ -283,13 +324,14 @@ async fn finalize_sourcemaps(
             .sourcemap_filename
             .clone()
             .unwrap_or_else(|| concat_string!(asset.filename, ".map"));
-          if let Some(sourcemap_asset) = emit_sourcemap(
+          if let Some(sourcemap_asset) = emit_sourcemap_with_json(
             options,
             &mut code,
             map,
             &map_filename,
             ecma_meta.debug_id,
             /*is_css*/ false,
+            bg_jsons.get_mut(bg_index).and_then(Option::take),
           )? {
             derived_assets.push(Asset {
               originate_from: None,

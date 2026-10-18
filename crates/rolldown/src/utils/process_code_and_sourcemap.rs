@@ -138,6 +138,47 @@ pub async fn prepare_sourcemap(
   Ok(())
 }
 
+/// perf/bun-gap B4 (PoC, `RD_BG_PAR_SOURCEMAP=1`): `prepare_sourcemap` for options that need no
+/// JS callback, with each source's relative path computed once (not once for the ignore list and
+/// again for `sources`) and in parallel. Returns `false` when it does not apply.
+pub fn bg_prepare_sourcemap_static(
+  options: &NormalizedBundlerOptions,
+  map: &mut SourceMap,
+  file_dir: &Path,
+  filename: &str,
+) -> bool {
+  use rolldown_utils::rayon::{IntoParallelRefIterator, ParallelIterator};
+  if cfg!(windows)
+    || options.sourcemap_path_transform.is_some()
+    || matches!(options.sourcemap_ignore_list, Some(rolldown_common::SourceMapIgnoreList::Fn(_)))
+  {
+    return false;
+  }
+  let file_base_name = Path::new(filename).file_name().expect("should have file name");
+  map.set_file(file_base_name.to_string_lossy().as_ref());
+  if options.sourcemap_exclude_sources {
+    map.set_source_contents(vec![]);
+  }
+  let sources: Vec<&str> = map.get_sources().collect();
+  let relative_sources: Vec<String> = sources
+    .par_iter()
+    .map(|source| source.as_path().relative(file_dir).to_string_lossy().into_owned())
+    .collect();
+  if let Some(list) = &options.sourcemap_ignore_list {
+    #[expect(clippy::cast_possible_truncation)]
+    let ignore_list = relative_sources
+      .iter()
+      .enumerate()
+      .filter_map(|(index, source)| list.exec_static(source).then_some(index as u32))
+      .collect::<Vec<_>>();
+    if !ignore_list.is_empty() {
+      map.set_ignore_list(ignore_list);
+    }
+  }
+  map.set_sources(relative_sources);
+  true
+}
+
 pub fn emit_sourcemap(
   options: &NormalizedBundlerOptions,
   code: &mut String,
@@ -145,6 +186,19 @@ pub fn emit_sourcemap(
   map_filename: &str,
   debug_id: u128,
   is_css: bool,
+) -> BuildResult<Option<OutputAsset>> {
+  emit_sourcemap_with_json(options, code, map, map_filename, debug_id, is_css, None)
+}
+
+/// `json`: the map already serialized (perf/bun-gap B4, done in parallel across assets).
+pub fn emit_sourcemap_with_json(
+  options: &NormalizedBundlerOptions,
+  code: &mut String,
+  map: &mut SourceMap,
+  map_filename: &str,
+  debug_id: u128,
+  is_css: bool,
+  json: Option<String>,
 ) -> BuildResult<Option<OutputAsset>> {
   let source_map_link_comment_kind =
     if is_css { CommentKind::SingleLineBlock } else { CommentKind::Line };
@@ -167,7 +221,7 @@ pub fn emit_sourcemap(
   if let Some(sourcemap) = &options.sourcemap {
     match sourcemap {
       SourceMapType::File | SourceMapType::Hidden => {
-        let source = map.to_json_string();
+        let source = json.unwrap_or_else(|| map.to_json_string());
         if matches!(sourcemap, SourceMapType::File) {
           process_sourcemap_related_reference(
             code,
