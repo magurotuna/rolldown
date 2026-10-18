@@ -244,6 +244,8 @@ impl<'a> GenerateStage<'a> {
       let inline_names = chunk_table
         .par_iter_mut_enumerated()
         .filter(|(chunk_idx, _)| !self.inline_state.is_record(*chunk_idx))
+        // perf/bun-gap B2 upper bound (RD_BG_SKIP_DECONFLICT=1): output is NOT correct.
+        .filter(|_| !rolldown_utils::bg_flag!("RD_BG_SKIP_DECONFLICT"))
         .filter_map(|(chunk_idx, chunk)| {
           let names = deconflict_chunk_symbols(
             chunk_idx,
