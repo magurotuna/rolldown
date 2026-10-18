@@ -67,6 +67,11 @@ impl GenerateStage<'_> {
       // content instead of paying an `into_owned` copy of the whole chunk text.
       let (minified_content, collapsed_map) = {
         // TODO: Do we need to ensure `chunk.preliminary_filename` to be absolute path?
+        // perf/bun-gap D-1: with per-module compression the chunk minify only mangles.
+        let mut chunk_minify_options = minify_options.clone();
+        if rolldown_utils::bg_flag!("RD_BG_MODULE_COMPRESS") {
+          chunk_minify_options.compress = None;
+        }
         let (minified_content, new_map, chunk_property_mangle_cache) = EcmaCompiler::dce_or_minify(
           &allocator_guard,
           chunk.content.try_as_inner_str()?,
@@ -74,7 +79,7 @@ impl GenerateStage<'_> {
           chunk.map.is_some(),
           chunk.preliminary_filename.as_str(),
           compress,
-          minify_options.clone(),
+          chunk_minify_options,
           codegen_options,
         )?;
         if let Some(cache) = chunk_property_mangle_cache {

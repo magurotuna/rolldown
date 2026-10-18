@@ -110,6 +110,29 @@ impl GenerateStage<'_> {
             rendered_concatenated_wrapped_module_parts,
             mut module_diagnostics,
           ) = ctx.finalize_normal_module(ast, ast_scope);
+          // perf/bun-gap D-1 (experiment, RD_BG_MODULE_COMPRESS=1): compress each module on its own
+          // (in parallel) with `unused: Keep` so its top-level bindings — read by other modules after
+          // scope hoisting — survive; the chunk minify then only mangles and prints.
+          if rolldown_utils::bg_flag!("RD_BG_MODULE_COMPRESS")
+            && let rolldown_common::MinifyOptions::Enabled(minify) = &self.options.minify
+            && let Some(mut compress) = minify.options.compress.clone()
+          {
+            // RD_BG_MODULE_COMPRESS=2 keeps the configured `unused` (top level is protected by the
+            // synthetic export below); =1 keeps every unused binding.
+            if std::env::var("RD_BG_MODULE_COMPRESS").as_deref() != Ok("2") {
+              compress.unused = oxc::minifier::CompressOptionsUnused::Keep;
+            }
+            ast.program.with_mut(|fields| {
+              let program = fields.program;
+              // As a script, root-scope bindings count as globals the compressor must keep
+              // (other modules of the chunk read them after scope hoisting).
+              let source_type = program.source_type;
+              program.source_type = oxc::span::SourceType::cjs();
+              let scoping = oxc::semantic::SemanticBuilder::new().build(program).semantic.into_scoping();
+              oxc::minifier::Compressor::new(fields.allocator).build_with_scoping(program, scoping, compress);
+              program.source_type = source_type;
+            });
+          }
           if super::bg_asset_rewrite::enabled()
             && module.ecma_view.source.contains(super::bg_asset_rewrite::PREFIX)
             && let Some(chunk_filename) = chunk.preliminary_filename.as_deref()
