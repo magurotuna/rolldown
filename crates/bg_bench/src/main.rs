@@ -59,7 +59,9 @@ fn main() {
   for _ in 0..runs {
     let options = options.clone();
     let t0 = Instant::now();
-    let warnings = rt.block_on(async move {
+    // Spawn onto a worker like napi's `execute_future` does (block_on would run it on the main
+    // thread, where spawns go through tokio's global inject queue).
+    let warnings = rt.block_on(rt.spawn(async move {
       let mut factory = BundleFactory::new(BundleFactoryOptions {
         bundler_options: options,
         plugins: vec![],
@@ -77,7 +79,8 @@ fn main() {
           std::process::exit(1);
         }
       }
-    });
+    }))
+    .unwrap();
     times.push((t0.elapsed().as_secs_f64() * 1000.0, warnings));
   }
   let rec = format!(

@@ -60,6 +60,7 @@ impl GenerateStage<'_> {
         ..CodegenOptions::default()
       };
 
+      let bg_t0 = rolldown_utils::bg::timing().then(rolldown_utils::bg::now_ms);
       let allocator_guard = allocator_pool.get();
       // The minify map borrows the pre-minify `chunk.content` (as `sourcesContent`,
       // which the collapse discards), so collapse before swapping in the minified
@@ -93,6 +94,15 @@ impl GenerateStage<'_> {
       chunk.content = minified_content.into();
       if let Some(map) = collapsed_map {
         chunk.map = Some(map);
+      }
+      if let Some(t0) = bg_t0 {
+        rolldown_utils::bg::log(format_args!(
+          "minify_chunk thread={:?} start={t0:.3} ms={:.3} bytes={} name={}",
+          rayon::current_thread_index(),
+          rolldown_utils::bg::now_ms() - t0,
+          chunk.content.as_bytes().len(),
+          chunk.preliminary_filename.as_str()
+        ));
       }
       Ok(())
     })?;

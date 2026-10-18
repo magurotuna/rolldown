@@ -120,6 +120,11 @@ impl EcmaCompiler {
     minify_options: MinifierOptions,
     codegen_options: CodegenOptions,
   ) -> BuildResult<(String, Option<SourceMap<'a>>, Option<ManglePropertyCache>)> {
+    // perf/bun-gap: RD_BG_TIMING=1 prints the parse / minify / codegen split per chunk.
+    static BG_TIMING: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    let bg_timing =
+      *BG_TIMING.get_or_init(|| std::env::var_os("RD_BG_TIMING").is_some_and(|v| v != "0"));
+    let bg_t0 = std::time::Instant::now();
     let ret = Parser::new(allocator, source_text, source_type)
       .with_options(ParseOptions { preserve_parens: false, ..ParseOptions::default() })
       .parse();
@@ -136,13 +141,23 @@ impl EcmaCompiler {
       );
     }
     let mut program = ret.program;
-    let minifier = Minifier::new(minify_options);
-    let ret = if compress {
-      minifier.minify(allocator, &mut program)
+    let bg_t1 = std::time::Instant::now();
+    static BG_MAX_ITER: std::sync::OnceLock<Option<u8>> = std::sync::OnceLock::new();
+    let bg_max_iter = *BG_MAX_ITER
+      .get_or_init(|| std::env::var("RD_BG_MAX_ITER").ok().and_then(|v| v.parse::<u8>().ok()));
+    let ret = if compress
+      && (bg_timing || bg_max_iter.is_some())
+      && minify_options.mangle_properties.is_none()
+      && minify_options.compress.is_some()
+      && minify_options.mangle.is_some()
+    {
+      bg_minify_split(allocator, &mut program, minify_options, bg_max_iter, filename, bg_timing)
     } else {
-      minifier.dce(allocator, &mut program)
+      let minifier = Minifier::new(minify_options);
+      if compress { minifier.minify(allocator, &mut program) } else { minifier.dce(allocator, &mut program) }
     };
     let property_mangle_cache = ret.property_mangle_cache;
+    let bg_t2 = std::time::Instant::now();
     let ret = Codegen::new()
       .with_options(CodegenOptions {
         source_map_path: enable_sourcemap.then(|| PathBuf::from(filename)),
@@ -151,7 +166,73 @@ impl EcmaCompiler {
       .with_scoping(ret.scoping)
       .with_private_member_mappings(ret.class_private_mappings)
       .build(&program);
+    if bg_timing {
+      #[expect(clippy::print_stderr, reason = "perf investigation output")]
+      {
+        eprintln!(
+          "[bg] dce_or_minify {filename} bytes={} parse={:.3} minify={:.3} codegen={:.3}",
+          source_text.len(),
+          (bg_t1 - bg_t0).as_secs_f64() * 1000.0,
+          (bg_t2 - bg_t1).as_secs_f64() * 1000.0,
+          bg_t2.elapsed().as_secs_f64() * 1000.0
+        );
+      }
+    }
     Ok((ret.code, ret.map, property_mangle_cache))
+  }
+}
+
+/// perf/bun-gap: the same steps as `oxc_minifier::Minifier::build` (Full mode, no property
+/// mangling), timed step by step. `max_iter` caps the compressor's fixed-point loop.
+fn bg_minify_split<'a>(
+  allocator: &'a Allocator,
+  program: &mut Program<'a>,
+  options: MinifierOptions,
+  max_iter: Option<u8>,
+  filename: &str,
+  timing: bool,
+) -> oxc::minifier::MinifierReturn {
+  use oxc::{mangler::Mangler, minifier::Compressor, semantic::SemanticBuilder};
+  let t0 = std::time::Instant::now();
+  let semantic = SemanticBuilder::new().build(program).semantic;
+  let stats = semantic.stats();
+  let scoping = semantic.into_scoping();
+  let t1 = std::time::Instant::now();
+  let mut compress_options = options.compress.expect("compress");
+  if max_iter.is_some() {
+    compress_options.max_iterations = max_iter;
+  }
+  let iterations = Compressor::new(allocator).build_with_scoping(program, scoping, compress_options);
+  let t2 = std::time::Instant::now();
+  let mut semantic = SemanticBuilder::new()
+    .with_build_nodes(true)
+    .with_class_table(true)
+    .with_stats(stats)
+    .build(program)
+    .semantic;
+  let t3 = std::time::Instant::now();
+  let class_private_mappings = Mangler::default()
+    .with_options(options.mangle.expect("mangle"))
+    .build_with_semantic(&mut semantic, program);
+  let t4 = std::time::Instant::now();
+  if timing {
+    let ms = |a: std::time::Instant, b: std::time::Instant| (b - a).as_secs_f64() * 1000.0;
+    #[expect(clippy::print_stderr, reason = "perf investigation output")]
+    {
+      eprintln!(
+        "[bg] minify_split {filename} semantic1={:.3} compress={:.3} iterations={iterations} semantic2={:.3} mangle={:.3}",
+        ms(t0, t1),
+        ms(t1, t2),
+        ms(t2, t3),
+        ms(t3, t4)
+      );
+    }
+  }
+  oxc::minifier::MinifierReturn {
+    scoping: Some(semantic.into_scoping()),
+    class_private_mappings: Some(class_private_mappings),
+    property_mangle_cache: None,
+    iterations,
   }
 }
 

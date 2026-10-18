@@ -1,6 +1,7 @@
 // We keep some standalone utilities here
 
 pub mod base64;
+pub mod bg;
 mod bitset;
 pub mod dashmap;
 pub mod dataurl;

@@ -43,6 +43,9 @@ impl<Fs: FileSystem + Clone + 'static> Bundle<Fs> {
   #[tracing::instrument(level = "debug", skip_all, parent = &self.bundle_span)]
   /// This method intentionally get the ownership of `self` to show that the method cannot be called multiple times.
   pub async fn write(mut self) -> BuildResult<BundleOutput> {
+    if rolldown_utils::bg::timing() {
+      rolldown_utils::bg::log(format_args!("write start"));
+    }
     let start = self.plugin_driver.build_timings.start();
     let result = async {
       self.trace_action_session_meta();
