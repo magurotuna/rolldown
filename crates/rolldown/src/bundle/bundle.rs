@@ -295,7 +295,15 @@ impl<Fs: FileSystem + Clone + 'static> Bundle<Fs> {
     // performance; reinstate it here, before the fallible steps below, so the
     // cache stays whole on their `Err` paths.
     // See internal-docs/bundler-data-lifecycle/implementation.md ("Cache integrity on a failed build").
-    self.merge_immutable_fields_for_cache(std::mem::take(&mut link_stage_output.symbol_db));
+    if rolldown_utils::bg_flag!("RD_BG_DEFER_DROP")
+      && !self.options.experimental.is_incremental_build_enabled()
+    {
+      // perf/bun-gap C5 (PoC): free the symbol db off the critical path (extends its lifetime
+      // past the generate hooks; trade-off is peak RSS).
+      crate::utils::defer_drop::spawn_drop(std::mem::take(&mut link_stage_output.symbol_db));
+    } else {
+      self.merge_immutable_fields_for_cache(std::mem::take(&mut link_stage_output.symbol_db));
+    }
 
     // `link_stage_output` is dead from here on (its `symbol_db` was just taken
     // for the cache merge); ship the remaining heavy fields (module_table,

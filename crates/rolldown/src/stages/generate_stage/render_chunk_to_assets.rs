@@ -271,7 +271,7 @@ impl GenerateStage<'_> {
       self.options.format,
       rolldown_common::OutputFormat::Iife | rolldown_common::OutputFormat::Umd
     );
-    chunk_graph
+    let ret = chunk_graph
       .chunk_table
       .par_iter_enumerated()
       .map(|(chunk_idx, item)| {
@@ -301,7 +301,13 @@ impl GenerateStage<'_> {
           })
           .collect::<Vec<_>>()
       })
-      .collect::<Vec<_>>()
+      .collect::<Vec<_>>();
+    if rolldown_utils::bg_flag!("RD_BG_DEFER_DROP") {
+      // perf/bun-gap B3 (PoC): free the module AST arenas off the critical path (trade-off:
+      // they stay alive while chunks are instantiated and minified → higher peak RSS).
+      crate::utils::defer_drop::spawn_drop(ast_table);
+    }
+    ret
   }
 
   fn trace_action_assets_ready(index_assets: &AssetVec) {
