@@ -110,6 +110,21 @@ impl GenerateStage<'_> {
             rendered_concatenated_wrapped_module_parts,
             mut module_diagnostics,
           ) = ctx.finalize_normal_module(ast, ast_scope);
+          if super::bg_asset_rewrite::enabled()
+            && module.ecma_view.source.contains(super::bg_asset_rewrite::PREFIX)
+            && let Some(chunk_filename) = chunk.preliminary_filename.as_deref()
+          {
+            use oxc::ast_visit::VisitMut as _;
+            let file_emitter = &self.plugin_driver.file_emitter;
+            ast.program.with_mut(|fields| {
+              super::bg_asset_rewrite::AssetRewriter {
+                alloc: fields.allocator,
+                file_emitter,
+                chunk_filename,
+              }
+              .visit_program(fields.program);
+            });
+          }
           if let Some(callees) = bridge_callees.get(&chunk_idx) {
             module_diagnostics.extend(bare_bridge_callee(
               ast.program(),

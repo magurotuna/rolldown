@@ -104,6 +104,7 @@ use crate::{
   utils::external_import_interop::ChunkAssignments,
 };
 
+mod bg_asset_rewrite;
 mod chunk_ext;
 mod chunk_optimizer;
 mod code_splitting;
