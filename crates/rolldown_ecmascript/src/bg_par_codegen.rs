@@ -43,8 +43,18 @@ pub fn par_codegen<'a>(
   line_tables: Option<std::sync::Arc<LineOffsetTables>>,
 ) -> Option<(String, Option<SourceMap<'a>>)> {
   let n = program.body.len();
-  let k = rayon::current_num_threads().min(16);
-  if k < 2 || n < 4 * k {
+  let mut k = rayon::current_num_threads().min(16);
+  // RD_BG_PAR_MIN_STMTS: lower the split threshold so small test fixtures exercise the split.
+  let min_stmts = std::env::var("RD_BG_PAR_MIN_STMTS").ok().and_then(|v| v.parse::<usize>().ok());
+  if let Some(min) = min_stmts {
+    if n < min {
+      return None;
+    }
+    k = k.min(n).max(2);
+  } else if k < 2 || n < 4 * k {
+    return None;
+  }
+  if n < 2 {
     return None;
   }
   // Cut points by source size of the statements.
