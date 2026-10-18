@@ -199,12 +199,25 @@ type OutputEntry = {
   size: number;
 };
 
+// perf/bun-gap C1 (PoC, RD_BG_CLI_SIZES=1): ask the binding for byte lengths instead of
+// converting every output (code and sourcemaps) to a JS string just to measure it.
+const BG_BYTE_LENGTH = Symbol.for('rolldown.bg.byteLength');
+
 function collectOutputEntries(output: RolldownOutput['output']): OutputEntry[] {
-  return output.map((chunk) => ({
-    type: chunk.type,
-    fileName: chunk.fileName,
-    size: chunk.type === 'chunk' ? Buffer.byteLength(chunk.code) : Buffer.byteLength(chunk.source),
-  }));
+  const bgSizes = process.env.RD_BG_CLI_SIZES === '1';
+  return output.map((chunk) => {
+    const byteLength = bgSizes ? (chunk as any)[BG_BYTE_LENGTH] : undefined;
+    return {
+      type: chunk.type,
+      fileName: chunk.fileName,
+      size:
+        typeof byteLength === 'function'
+          ? byteLength.call(chunk)
+          : chunk.type === 'chunk'
+            ? Buffer.byteLength(chunk.code)
+            : Buffer.byteLength(chunk.source),
+    };
+  });
 }
 
 function collectOutputLayoutAdjustmentSizes(entries: OutputEntry[]) {

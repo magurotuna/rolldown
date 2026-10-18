@@ -109,6 +109,12 @@ impl ClassicBundler {
     Ok(bundle)
   }
 
+  /// perf/bun-gap C2 (PoC): hand the last bundle's state (plugin driver, module infos, caches)
+  /// to the caller so it can be dropped off the JS thread.
+  pub fn bg_take_last_bundle_handle(&mut self) -> Option<BundleHandle> {
+    self.last_bundle_handle.take()
+  }
+
   #[must_use = "Future must be awaited to do the actual cleanup work"]
   pub fn close(&mut self) -> impl Future<Output = anyhow::Result<()>> + Send + 'static {
     let is_closed = self.closed;

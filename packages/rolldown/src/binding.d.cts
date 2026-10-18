@@ -1798,12 +1798,16 @@ export declare class BindingOutputAsset {
   getOriginalFileName(): string | null
   getOriginalFileNames(): Array<string>
   getSource(): BindingAssetSource
+  /** perf/bun-gap C1 (PoC): byte length of `source` without converting it to JS. */
+  getSourceByteLength(): number
   getName(): string | null
   getNames(): Array<string>
 }
 
 export declare class BindingOutputChunk {
   dropInner(): ExternalMemoryStatus
+  /** perf/bun-gap C1 (PoC): byte length of `code` without converting it to a JS string. */
+  getCodeByteLength(): number
   getIsEntry(): boolean
   getIsDynamicEntry(): boolean
   getFacadeModuleId(): string | null

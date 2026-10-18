@@ -56,6 +56,13 @@ impl BindingOutputChunk {
     }
   }
 
+  /// perf/bun-gap C1 (PoC): byte length of `code` without converting it to a JS string.
+  #[napi]
+  pub fn get_code_byte_length(&self) -> napi::Result<u32> {
+    #[expect(clippy::cast_possible_truncation)]
+    Ok(self.try_get_inner()?.code.len() as u32)
+  }
+
   #[napi]
   pub fn get_is_entry(&self) -> napi::Result<bool> {
     Ok(self.try_get_inner()?.is_entry)

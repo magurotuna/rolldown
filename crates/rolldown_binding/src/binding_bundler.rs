@@ -187,11 +187,16 @@ impl BindingBundler {
   pub fn close<'env>(&mut self, env: &'env Env) -> napi::Result<PromiseRaw<'env, ()>> {
     let cleanup_fut = self.inner.close();
     let handles = std::mem::take(&mut self.bundle_handles);
+    // perf/bun-gap C2 (PoC): drop the last bundle's state on the worker, not in the JS finalizer.
+    let last = rolldown_utils::bg_flag!("RD_BG_BG_DROP")
+      .then(|| self.inner.bg_take_last_bundle_handle())
+      .flatten();
     spawn_boxed_future(env, async move {
       let res = cleanup_fut.await;
       handle_result(res)?;
       // After the cleanup, so `closeBundle` is part of what the other side reports.
       handle_result(report_plugin_timings(&handles).await)?;
+      drop(last);
       Ok(())
     })
   }

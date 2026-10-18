@@ -12,6 +12,11 @@ export class OutputAssetImpl extends PlainObjectLike implements OutputAsset {
     super();
   }
 
+  /** perf/bun-gap C1 (PoC): byte length of `source` without converting it to JS. */
+  [Symbol.for('rolldown.bg.byteLength')](): number {
+    return this.bindingAsset.getSourceByteLength();
+  }
+
   @lazyProp
   get fileName(): string {
     return this.bindingAsset.getFileName();

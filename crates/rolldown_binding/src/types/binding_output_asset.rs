@@ -87,6 +87,13 @@ impl BindingOutputAsset {
     Ok(source)
   }
 
+  /// perf/bun-gap C1 (PoC): byte length of `source` without converting it to JS.
+  #[napi]
+  pub fn get_source_byte_length(&self) -> napi::Result<u32> {
+    #[expect(clippy::cast_possible_truncation)]
+    Ok(self.try_get_inner()?.source.as_bytes().len() as u32)
+  }
+
   #[napi]
   pub fn get_name(&self) -> napi::Result<Option<&str>> {
     Ok(self.try_get_inner()?.names.first().map(AsRef::as_ref))

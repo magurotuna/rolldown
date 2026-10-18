@@ -12,6 +12,11 @@ export class OutputChunkImpl extends PlainObjectLike implements OutputChunk {
     super();
   }
 
+  /** perf/bun-gap C1 (PoC): byte length of `code` without converting it to a JS string. */
+  [Symbol.for('rolldown.bg.byteLength')](): number {
+    return this.bindingChunk.getCodeByteLength();
+  }
+
   @lazyProp
   get fileName(): string {
     return this.bindingChunk.getFileName();
