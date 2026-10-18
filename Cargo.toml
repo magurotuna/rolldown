@@ -337,3 +337,30 @@ opt-level = "s"
 # it will strip these information for non-debug files
 debug = "full"
 strip = "none"
+
+# perf/bun-gap: local oxc 0.154.0 clone (crates_v0.154.0 = d47efe5cb875) for oxc-side PoCs.
+[patch.crates-io]
+oxc = { path = "/Users/yusuke/perf-work/rolldown-bun-mac/oxc/crates/oxc" }
+oxc_allocator = { path = "/Users/yusuke/perf-work/rolldown-bun-mac/oxc/crates/oxc_allocator" }
+oxc_ast = { path = "/Users/yusuke/perf-work/rolldown-bun-mac/oxc/crates/oxc_ast" }
+oxc_ast_macros = { path = "/Users/yusuke/perf-work/rolldown-bun-mac/oxc/crates/oxc_ast_macros" }
+oxc_ast_visit = { path = "/Users/yusuke/perf-work/rolldown-bun-mac/oxc/crates/oxc_ast_visit" }
+oxc_codegen = { path = "/Users/yusuke/perf-work/rolldown-bun-mac/oxc/crates/oxc_codegen" }
+oxc_compat = { path = "/Users/yusuke/perf-work/rolldown-bun-mac/oxc/crates/oxc_compat" }
+oxc_data_structures = { path = "/Users/yusuke/perf-work/rolldown-bun-mac/oxc/crates/oxc_data_structures" }
+oxc_diagnostics = { path = "/Users/yusuke/perf-work/rolldown-bun-mac/oxc/crates/oxc_diagnostics" }
+oxc_ecmascript = { path = "/Users/yusuke/perf-work/rolldown-bun-mac/oxc/crates/oxc_ecmascript" }
+oxc_estree = { path = "/Users/yusuke/perf-work/rolldown-bun-mac/oxc/crates/oxc_estree" }
+oxc_isolated_declarations = { path = "/Users/yusuke/perf-work/rolldown-bun-mac/oxc/crates/oxc_isolated_declarations" }
+oxc_mangler = { path = "/Users/yusuke/perf-work/rolldown-bun-mac/oxc/crates/oxc_mangler" }
+oxc_minifier = { path = "/Users/yusuke/perf-work/rolldown-bun-mac/oxc/crates/oxc_minifier" }
+oxc_napi = { path = "/Users/yusuke/perf-work/rolldown-bun-mac/oxc/crates/oxc_napi" }
+oxc_parser = { path = "/Users/yusuke/perf-work/rolldown-bun-mac/oxc/crates/oxc_parser" }
+oxc_regular_expression = { path = "/Users/yusuke/perf-work/rolldown-bun-mac/oxc/crates/oxc_regular_expression" }
+oxc_semantic = { path = "/Users/yusuke/perf-work/rolldown-bun-mac/oxc/crates/oxc_semantic" }
+oxc_span = { path = "/Users/yusuke/perf-work/rolldown-bun-mac/oxc/crates/oxc_span" }
+oxc_str = { path = "/Users/yusuke/perf-work/rolldown-bun-mac/oxc/crates/oxc_str" }
+oxc_syntax = { path = "/Users/yusuke/perf-work/rolldown-bun-mac/oxc/crates/oxc_syntax" }
+oxc_transformer = { path = "/Users/yusuke/perf-work/rolldown-bun-mac/oxc/crates/oxc_transformer" }
+oxc_transformer_plugins = { path = "/Users/yusuke/perf-work/rolldown-bun-mac/oxc/crates/oxc_transformer_plugins" }
+oxc_traverse = { path = "/Users/yusuke/perf-work/rolldown-bun-mac/oxc/crates/oxc_traverse" }

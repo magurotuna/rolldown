@@ -125,39 +125,85 @@ impl EcmaCompiler {
     let bg_timing =
       *BG_TIMING.get_or_init(|| std::env::var_os("RD_BG_TIMING").is_some_and(|v| v != "0"));
     let bg_t0 = std::time::Instant::now();
-    let ret = Parser::new(allocator, source_text, source_type)
-      .with_options(ParseOptions { preserve_parens: false, ..ParseOptions::default() })
-      .parse();
-    if ret.fatal_error || !ret.diagnostics.is_empty() {
-      return Err(
-        BuildDiagnostic::from_oxc_diagnostics(
-          ret.diagnostics,
-          &ArcStr::from(source_text),
-          filename,
-          Severity::Error,
-          EventKind::ParseError,
-        )
-        .into(),
-      );
-    }
-    let mut program = ret.program;
-    let bg_t1 = std::time::Instant::now();
-    static BG_MAX_ITER: std::sync::OnceLock<Option<u8>> = std::sync::OnceLock::new();
-    let bg_max_iter = *BG_MAX_ITER
-      .get_or_init(|| std::env::var("RD_BG_MAX_ITER").ok().and_then(|v| v.parse::<u8>().ok()));
-    let ret = if compress
-      && (bg_timing || bg_max_iter.is_some())
-      && minify_options.mangle_properties.is_none()
-      && minify_options.compress.is_some()
-      && minify_options.mangle.is_some()
-    {
-      bg_minify_split(allocator, &mut program, minify_options, bg_max_iter, filename, bg_timing)
+    static BG_PAR_CODEGEN: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    let bg_par_codegen = *BG_PAR_CODEGEN
+      .get_or_init(|| std::env::var_os("RD_BG_PAR_CODEGEN").is_some_and(|v| v != "0"));
+    let core = || -> BuildResult<(Program<'a>, oxc::minifier::MinifierReturn, std::time::Instant)> {
+      let ret = Parser::new(allocator, source_text, source_type)
+        .with_options(ParseOptions { preserve_parens: false, ..ParseOptions::default() })
+        .parse();
+      if ret.fatal_error || !ret.diagnostics.is_empty() {
+        return Err(
+          BuildDiagnostic::from_oxc_diagnostics(
+            ret.diagnostics,
+            &ArcStr::from(source_text),
+            filename,
+            Severity::Error,
+            EventKind::ParseError,
+          )
+          .into(),
+        );
+      }
+      let mut program = ret.program;
+      let bg_t1 = std::time::Instant::now();
+      static BG_MAX_ITER: std::sync::OnceLock<Option<u8>> = std::sync::OnceLock::new();
+      let bg_max_iter = *BG_MAX_ITER
+        .get_or_init(|| std::env::var("RD_BG_MAX_ITER").ok().and_then(|v| v.parse::<u8>().ok()));
+      let ret = if compress
+        && (bg_timing || bg_max_iter.is_some())
+        && minify_options.mangle_properties.is_none()
+        && minify_options.compress.is_some()
+        && minify_options.mangle.is_some()
+      {
+        bg_minify_split(allocator, &mut program, minify_options, bg_max_iter, filename, bg_timing)
+      } else {
+        let minifier = Minifier::new(minify_options);
+        if compress { minifier.minify(allocator, &mut program) } else { minifier.dce(allocator, &mut program) }
+      };
+      Ok((program, ret, bg_t1))
+    };
+    // perf/bun-gap A3: build the sourcemap line tables of the chunk text on another thread while
+    // this one parses and minifies.
+    let mut bg_line_tables = None;
+    let (mut program, ret, bg_t1) = if bg_par_codegen && enable_sourcemap {
+      let tables = &mut bg_line_tables;
+      rayon::in_place_scope(|s| {
+        s.spawn(move |_| *tables = Some(oxc::codegen::generate_line_offset_tables(source_text)));
+        core()
+      })?
     } else {
-      let minifier = Minifier::new(minify_options);
-      if compress { minifier.minify(allocator, &mut program) } else { minifier.dce(allocator, &mut program) }
+      core()?
     };
     let property_mangle_cache = ret.property_mangle_cache;
     let bg_t2 = std::time::Instant::now();
+    if bg_par_codegen {
+      let opts = CodegenOptions {
+        source_map_path: enable_sourcemap.then(|| PathBuf::from(filename)),
+        ..codegen_options.clone()
+      };
+      if let Some((code, map)) = crate::bg_par_codegen::par_codegen(
+        allocator,
+        &mut program,
+        &opts,
+        ret.scoping.as_ref(),
+        ret.class_private_mappings.as_ref(),
+        bg_line_tables,
+      ) {
+        if bg_timing {
+          #[expect(clippy::print_stderr, reason = "perf investigation output")]
+          {
+            eprintln!(
+              "[bg] dce_or_minify {filename} bytes={} parse={:.3} minify={:.3} codegen(par)={:.3}",
+              source_text.len(),
+              (bg_t1 - bg_t0).as_secs_f64() * 1000.0,
+              (bg_t2 - bg_t1).as_secs_f64() * 1000.0,
+              bg_t2.elapsed().as_secs_f64() * 1000.0
+            );
+          }
+        }
+        return Ok((code, map, property_mangle_cache));
+      }
+    }
     let ret = Codegen::new()
       .with_options(CodegenOptions {
         source_map_path: enable_sourcemap.then(|| PathBuf::from(filename)),

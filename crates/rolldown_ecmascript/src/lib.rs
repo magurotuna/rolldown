@@ -1,3 +1,4 @@
+mod bg_par_codegen;
 mod constants;
 mod ecma_ast;
 mod ecma_compiler;
