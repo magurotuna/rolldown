@@ -240,13 +240,20 @@ async fn finalize_sourcemaps(
   hash_base: u8,
 ) -> BuildResult<()> {
   let bg_par = rolldown_utils::bg_flag!("RD_BG_PAR_SOURCEMAP");
+  // perf/bun-gap B4 split (PoC): RD_BG_SM_MODE=1 path dedup only (serial), 2 = +paths in parallel
+  // within a map, 3 = +maps prepared in parallel, unset/0 = all of it + JSON in parallel.
+  static BG_SM_MODE: std::sync::OnceLock<u8> = std::sync::OnceLock::new();
+  let bg_mode = *BG_SM_MODE.get_or_init(|| {
+    std::env::var("RD_BG_SM_MODE").ok().and_then(|v| v.parse().ok()).unwrap_or(0)
+  });
+  let bg_t0 = rolldown_utils::bg::timing().then(rolldown_utils::bg::now_ms);
   let bg_static = bg_par
     && !cfg!(windows)
     && options.sourcemap_path_transform.is_none()
     && !matches!(options.sourcemap_ignore_list, Some(rolldown_common::SourceMapIgnoreList::Fn(_)));
   if bg_static {
     // perf/bun-gap B4 (PoC): no JS callback involved, so prepare every map in parallel.
-    assets.par_iter_mut().for_each(|asset| {
+    let prepare = |asset: &mut rolldown_common::Asset| {
       let filename = asset.filename.clone();
       if let (InstantiationKind::Ecma(ecma_meta), Some(map)) = (&mut asset.meta, asset.map.as_mut())
       {
@@ -258,10 +265,16 @@ async fn finalize_sourcemaps(
           map,
           &ecma_meta.file_dir,
           filename.as_str(),
+          bg_mode != 1,
         );
         debug_assert!(applied);
       }
-    });
+    };
+    if matches!(bg_mode, 1 | 2) {
+      assets.iter_mut().for_each(prepare);
+    } else {
+      assets.par_iter_mut().for_each(prepare);
+    }
   } else {
     try_join_all(assets.iter_mut().map(async |asset| {
       let filename = asset.filename.clone();
@@ -299,7 +312,9 @@ async fn finalize_sourcemaps(
   });
 
   // perf/bun-gap B4 (PoC): serialize the maps in parallel up front (the loop below is serial).
+  let bg_t1 = rolldown_utils::bg::timing().then(rolldown_utils::bg::now_ms);
   let mut bg_jsons: Vec<Option<String>> = if bg_par
+    && bg_mode == 0
     && !options.sourcemap_debug_ids
     && matches!(options.sourcemap, Some(SourceMapType::File | SourceMapType::Hidden))
   {
@@ -361,6 +376,16 @@ async fn finalize_sourcemaps(
   }
 
   assets.extend(derived_assets);
+
+  if let (Some(t0), Some(t1)) = (bg_t0, bg_t1) {
+    let t2 = rolldown_utils::bg::now_ms();
+    rolldown_utils::bg::log(format_args!(
+      "finalize_sourcemaps prepare={:.3} rest={:.3} total={:.3}",
+      t1 - t0,
+      t2 - t1,
+      t2 - t0
+    ));
+  }
 
   Ok(())
 }

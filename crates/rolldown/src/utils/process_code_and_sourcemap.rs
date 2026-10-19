@@ -146,6 +146,7 @@ pub fn bg_prepare_sourcemap_static(
   map: &mut SourceMap,
   file_dir: &Path,
   filename: &str,
+  par_paths: bool,
 ) -> bool {
   use rolldown_utils::rayon::{IntoParallelRefIterator, ParallelIterator};
   if cfg!(windows)
@@ -160,10 +161,12 @@ pub fn bg_prepare_sourcemap_static(
     map.set_source_contents(vec![]);
   }
   let sources: Vec<&str> = map.get_sources().collect();
-  let relative_sources: Vec<String> = sources
-    .par_iter()
-    .map(|source| source.as_path().relative(file_dir).to_string_lossy().into_owned())
-    .collect();
+  let relative = |source: &&str| source.as_path().relative(file_dir).to_string_lossy().into_owned();
+  let relative_sources: Vec<String> = if par_paths {
+    sources.par_iter().map(relative).collect()
+  } else {
+    sources.iter().map(relative).collect()
+  };
   if let Some(list) = &options.sourcemap_ignore_list {
     #[expect(clippy::cast_possible_truncation)]
     let ignore_list = relative_sources
