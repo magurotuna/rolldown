@@ -146,7 +146,7 @@ pub fn bg_prepare_sourcemap_static(
   map: &mut SourceMap,
   file_dir: &Path,
   filename: &str,
-  par_paths: bool,
+  par_paths_min_sources: usize,
 ) -> bool {
   use rolldown_utils::rayon::{IntoParallelRefIterator, ParallelIterator};
   if cfg!(windows)
@@ -162,7 +162,7 @@ pub fn bg_prepare_sourcemap_static(
   }
   let sources: Vec<&str> = map.get_sources().collect();
   let relative = |source: &&str| source.as_path().relative(file_dir).to_string_lossy().into_owned();
-  let relative_sources: Vec<String> = if par_paths {
+  let relative_sources: Vec<String> = if sources.len() >= par_paths_min_sources {
     sources.par_iter().map(relative).collect()
   } else {
     sources.iter().map(relative).collect()

@@ -241,7 +241,8 @@ async fn finalize_sourcemaps(
 ) -> BuildResult<()> {
   let bg_par = rolldown_utils::bg_flag!("RD_BG_PAR_SOURCEMAP");
   // perf/bun-gap B4 split (PoC): RD_BG_SM_MODE=1 path dedup only (serial), 2 = +paths in parallel
-  // within a map, 3 = +maps prepared in parallel, unset/0 = all of it + JSON in parallel.
+  // within a map, 3 = +maps prepared in parallel, unset/0 = all of it + JSON in parallel,
+  // 4 = dedup + JSON in parallel, 5 = 4 + paths in parallel only within maps of 1024+ sources.
   static BG_SM_MODE: std::sync::OnceLock<u8> = std::sync::OnceLock::new();
   let bg_mode = *BG_SM_MODE.get_or_init(|| {
     std::env::var("RD_BG_SM_MODE").ok().and_then(|v| v.parse().ok()).unwrap_or(0)
@@ -265,12 +266,16 @@ async fn finalize_sourcemaps(
           map,
           &ecma_meta.file_dir,
           filename.as_str(),
-          bg_mode != 1,
+          match bg_mode {
+            1 | 4 => usize::MAX,
+            5 => 1024,
+            _ => 0,
+          },
         );
         debug_assert!(applied);
       }
     };
-    if matches!(bg_mode, 1 | 2) {
+    if matches!(bg_mode, 1 | 2 | 4 | 5) {
       assets.iter_mut().for_each(prepare);
     } else {
       assets.par_iter_mut().for_each(prepare);
@@ -314,7 +319,7 @@ async fn finalize_sourcemaps(
   // perf/bun-gap B4 (PoC): serialize the maps in parallel up front (the loop below is serial).
   let bg_t1 = rolldown_utils::bg::timing().then(rolldown_utils::bg::now_ms);
   let mut bg_jsons: Vec<Option<String>> = if bg_par
-    && bg_mode == 0
+    && matches!(bg_mode, 0 | 4 | 5)
     && !options.sourcemap_debug_ids
     && matches!(options.sourcemap, Some(SourceMapType::File | SourceMapType::Hidden))
   {
