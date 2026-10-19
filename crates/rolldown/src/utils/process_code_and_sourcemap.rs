@@ -5,6 +5,7 @@ use rolldown_common::{NormalizedBundlerOptions, OutputAsset, SourceMapType};
 use rolldown_error::{BuildResult, ResultExt};
 use rolldown_sourcemap::SourceMap;
 use rolldown_std_utils::relative_path_to_slash;
+use rolldown_utils::rayon::{IntoParallelIterator, ParallelIterator};
 use sugar_path::SugarPath;
 use url::Url;
 
@@ -43,12 +44,18 @@ pub async fn prepare_sourcemap(
   let map_filename = format!("{}.map", file_base_name.to_string_lossy());
   let map_path = file_dir.join(&map_filename);
 
-  if let Some(source_map_ignore_list) = &options.sourcemap_ignore_list {
-    let relative_sources = map
-      .get_sources()
-      .map(|source| source.as_path().relative(file_dir).to_string_lossy().into_owned())
-      .collect::<Vec<_>>();
+  // The ignore list, the path transform and the final `sources` all start from the sources
+  // relative to `file_dir`, so compute them once. Windows still builds `sources` with slashes below.
+  let relative_sources = if options.sourcemap_ignore_list.is_some()
+    || options.sourcemap_path_transform.is_some()
+    || !cfg!(windows)
+  {
+    relative_sources(map, file_dir)
+  } else {
+    vec![]
+  };
 
+  if let Some(source_map_ignore_list) = &options.sourcemap_ignore_list {
     let ignored = match source_map_ignore_list {
       rolldown_common::SourceMapIgnoreList::Boolean(_)
       | rolldown_common::SourceMapIgnoreList::StringOrRegex(_) => {
@@ -63,7 +70,7 @@ pub async fn prepare_sourcemap(
         // sourcemap instead of once per source.
         let source_count = relative_sources.len();
         let ignored = source_map_ignore_list
-          .exec_dynamic(relative_sources, map_path.to_string_lossy().as_ref())
+          .exec_dynamic(relative_sources.clone(), map_path.to_string_lossy().as_ref())
           .await?;
         if ignored.len() != source_count {
           return Err(
@@ -93,10 +100,6 @@ pub async fn prepare_sourcemap(
 
   if let Some(sourcemap_path_transform) = &options.sourcemap_path_transform {
     let map_path = map_path.to_string_lossy();
-    let relative_sources = map
-      .get_sources()
-      .map(|source| source.as_path().relative(file_dir).to_string_lossy().into_owned())
-      .collect::<Vec<_>>();
     let source_count = relative_sources.len();
 
     // One call rewrites every source, so the napi boundary is crossed once per sourcemap instead
@@ -127,15 +130,23 @@ pub async fn prepare_sourcemap(
       map.get_sources().map(|x| relative_path_to_slash(x.as_path(), file_dir)).collect::<Vec<_>>();
     map.set_sources(sources);
   } else {
-    map.set_sources(
-      map
-        .get_sources()
-        .map(|x| x.as_path().relative(file_dir).to_string_lossy().into_owned())
-        .collect::<Vec<_>>(),
-    );
+    map.set_sources(relative_sources);
   }
 
   Ok(())
+}
+
+/// Maps with at least this many sources compute their relative paths in parallel. Below it, rayon's
+/// overhead outweighed the gain in a build with many small chunk maps.
+const PARALLEL_RELATIVE_SOURCES_THRESHOLD: usize = 1024;
+
+fn relative_sources(map: &SourceMap, file_dir: &Path) -> Vec<String> {
+  let relative = |source: &str| source.as_path().relative(file_dir).to_string_lossy().into_owned();
+  if map.get_sources().len() >= PARALLEL_RELATIVE_SOURCES_THRESHOLD {
+    map.get_sources().collect::<Vec<_>>().into_par_iter().map(relative).collect()
+  } else {
+    map.get_sources().map(relative).collect()
+  }
 }
 
 pub fn emit_sourcemap(

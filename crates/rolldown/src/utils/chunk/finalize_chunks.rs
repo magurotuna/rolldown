@@ -272,53 +272,58 @@ async fn finalize_sourcemaps(
     }
   });
 
-  let mut derived_assets = Vec::new();
-  for asset in assets.iter_mut() {
-    match &mut asset.meta {
-      InstantiationKind::Ecma(ecma_meta) => {
-        let asset_code = mem::take(&mut asset.content);
-        let mut code = asset_code.try_into_string()?;
-        if let Some(map) = asset.map.as_mut() {
-          let map_filename = ecma_meta
-            .sourcemap_filename
-            .clone()
-            .unwrap_or_else(|| concat_string!(asset.filename, ".map"));
-          if let Some(sourcemap_asset) = emit_sourcemap(
-            options,
-            &mut code,
-            map,
-            &map_filename,
-            ecma_meta.debug_id,
-            /*is_css*/ false,
-          )? {
-            derived_assets.push(Asset {
-              originate_from: None,
-              content: sourcemap_asset.source,
-              filename: sourcemap_asset.filename.clone(),
-              map: None,
-              meta: InstantiationKind::Sourcemap(Box::new(rolldown_common::SourcemapAssetMeta {
-                names: sourcemap_asset.names,
-                original_file_names: sourcemap_asset.original_file_names,
-              })),
-            });
-            if ecma_meta.sourcemap_filename.is_none() {
-              let sourcemap_filename =
-                if matches!(options.sourcemap, Some(SourceMapType::Inline) | None) {
-                  None
-                } else {
-                  Some(sourcemap_asset.filename.to_string())
-                };
-              ecma_meta.sourcemap_filename = sourcemap_filename;
+  // Serializing a map is the costly part, and each asset's map is independent of the others.
+  let derived_assets = assets
+    .par_iter_mut()
+    .map(|asset| -> BuildResult<Option<Asset>> {
+      let mut derived_asset = None;
+      match &mut asset.meta {
+        InstantiationKind::Ecma(ecma_meta) => {
+          let asset_code = mem::take(&mut asset.content);
+          let mut code = asset_code.try_into_string()?;
+          if let Some(map) = asset.map.as_mut() {
+            let map_filename = ecma_meta
+              .sourcemap_filename
+              .clone()
+              .unwrap_or_else(|| concat_string!(asset.filename, ".map"));
+            if let Some(sourcemap_asset) = emit_sourcemap(
+              options,
+              &mut code,
+              map,
+              &map_filename,
+              ecma_meta.debug_id,
+              /*is_css*/ false,
+            )? {
+              derived_asset = Some(Asset {
+                originate_from: None,
+                content: sourcemap_asset.source,
+                filename: sourcemap_asset.filename.clone(),
+                map: None,
+                meta: InstantiationKind::Sourcemap(Box::new(rolldown_common::SourcemapAssetMeta {
+                  names: sourcemap_asset.names,
+                  original_file_names: sourcemap_asset.original_file_names,
+                })),
+              });
+              if ecma_meta.sourcemap_filename.is_none() {
+                let sourcemap_filename =
+                  if matches!(options.sourcemap, Some(SourceMapType::Inline) | None) {
+                    None
+                  } else {
+                    Some(sourcemap_asset.filename.to_string())
+                  };
+                ecma_meta.sourcemap_filename = sourcemap_filename;
+              }
             }
           }
+          asset.content = code.into();
         }
-        asset.content = code.into();
+        InstantiationKind::None | InstantiationKind::Sourcemap(_) => {}
       }
-      InstantiationKind::None | InstantiationKind::Sourcemap(_) => {}
-    }
-  }
+      Ok(derived_asset)
+    })
+    .collect::<BuildResult<Vec<_>>>()?;
 
-  assets.extend(derived_assets);
+  assets.extend(derived_assets.into_iter().flatten());
 
   Ok(())
 }
