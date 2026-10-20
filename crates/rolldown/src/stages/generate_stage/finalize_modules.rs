@@ -125,9 +125,12 @@ impl GenerateStage<'_> {
             ast.program.with_mut(|fields| {
               let program = fields.program;
               // As a script, root-scope bindings count as globals the compressor must keep
-              // (other modules of the chunk read them after scope hoisting).
+              // (other modules of the chunk read them after scope hoisting). `SourceType::cjs()` is
+              // not a script for oxc (`is_script()` is only `ModuleKind::Script`), so with it the
+              // compressor inlined and dropped root bindings that other modules read (excalidraw's
+              // `eyeDropperIconSvgPaths`).
               let source_type = program.source_type;
-              program.source_type = oxc::span::SourceType::cjs();
+              program.source_type = oxc::span::SourceType::script();
               let scoping = oxc::semantic::SemanticBuilder::new().build(program).semantic.into_scoping();
               oxc::minifier::Compressor::new(fields.allocator).build_with_scoping(program, scoping, compress);
               program.source_type = source_type;
