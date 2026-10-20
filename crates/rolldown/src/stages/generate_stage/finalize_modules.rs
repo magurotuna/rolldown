@@ -117,8 +117,8 @@ impl GenerateStage<'_> {
             && let rolldown_common::MinifyOptions::Enabled(minify) = &self.options.minify
             && let Some(mut compress) = minify.options.compress.clone()
           {
-            // RD_BG_MODULE_COMPRESS=2 keeps the configured `unused` (top level is protected by the
-            // synthetic export below); =1 keeps every unused binding.
+            // RD_BG_MODULE_COMPRESS=2 keeps the configured `unused`; =1 (what was measured) keeps every
+            // unused binding.
             if std::env::var("RD_BG_MODULE_COMPRESS").as_deref() != Ok("2") {
               compress.unused = oxc::minifier::CompressOptionsUnused::Keep;
             }
