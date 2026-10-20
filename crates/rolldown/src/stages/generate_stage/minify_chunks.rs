@@ -69,7 +69,10 @@ impl GenerateStage<'_> {
         // TODO: Do we need to ensure `chunk.preliminary_filename` to be absolute path?
         // perf/bun-gap D-1: with per-module compression the chunk minify only mangles.
         let mut chunk_minify_options = minify_options.clone();
-        if rolldown_utils::bg_flag!("RD_BG_MODULE_COMPRESS") {
+        // Only when the per-module pass ran (full minify); `'dce-only'` keeps its chunk DCE.
+        if rolldown_utils::bg_flag!("RD_BG_MODULE_COMPRESS")
+          && matches!(options.minify, rolldown_common::MinifyOptions::Enabled(_))
+        {
           chunk_minify_options.compress = None;
         }
         let (minified_content, new_map, chunk_property_mangle_cache) = EcmaCompiler::dce_or_minify(
