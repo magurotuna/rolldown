@@ -250,3 +250,29 @@ fn process_sourcemap_related_reference(
   }
   Ok(())
 }
+
+#[cfg(test)]
+mod test {
+  use std::{borrow::Cow, path::Path};
+
+  use rolldown_sourcemap::SourceMap;
+  use sugar_path::SugarPath;
+
+  use super::{PARALLEL_RELATIVE_SOURCES_THRESHOLD, relative_sources};
+
+  #[test]
+  fn relative_sources_in_parallel_keep_the_source_order() {
+    // Enough sources to take the parallel path, whose result must match the serial one in order.
+    let count = PARALLEL_RELATIVE_SOURCES_THRESHOLD + 7;
+    let sources =
+      (0..count).map(|i| Cow::Owned(format!("/project/src/dir{}/module{i}.js", i % 13))).collect();
+    let map = SourceMap::new(None, vec![], None, sources, vec![], Box::new([]), None);
+    let file_dir = Path::new("/project/dist/assets");
+    let serial = map
+      .get_sources()
+      .map(|source| source.as_path().relative(file_dir).to_string_lossy().into_owned())
+      .collect::<Vec<_>>();
+    assert_eq!(serial.len(), count);
+    assert_eq!(relative_sources(&map, file_dir), serial);
+  }
+}
