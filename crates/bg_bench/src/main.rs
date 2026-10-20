@@ -20,7 +20,22 @@ fn main() {
   let mut value: serde_json::Value =
     serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
   let external_regex = value.as_object_mut().unwrap().remove("externalRegex");
+  // Harness-only `bgMinify: { compress, mangle, removeWhitespace }`: the object form of `minify`,
+  // which the Rust options JSON cannot express.
+  let bg_minify = value.as_object_mut().unwrap().remove("bgMinify");
   let mut options: BundlerOptions = serde_json::from_value(value).unwrap();
+  if let Some(m) = bg_minify {
+    let flag = |key: &str| m.get(key).and_then(serde_json::Value::as_bool).unwrap_or(true);
+    options.minify = Some(rolldown_common::RawMinifyOptions::Object(
+      rolldown_common::RawMinifyOptionsDetailed {
+        mangle: flag("mangle").then(rolldown_common::RawMangleOptions::default),
+        mangle_properties: None,
+        compress: flag("compress").then(rolldown_common::RawCompressOptions::default),
+        remove_whitespace: flag("removeWhitespace"),
+        ascii_only: false,
+      },
+    ));
+  }
   if let Some(serde_json::Value::Array(res)) = external_regex {
     options.external = Some(IsExternal::StringOrRegex(
       res
