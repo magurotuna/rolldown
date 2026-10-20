@@ -13,13 +13,22 @@ import { ChunkingContextImpl } from '../types/chunking-context';
 import { transformAssetSource } from './asset-source';
 import { arraify, unimplemented } from './misc';
 import { transformRenderedChunk } from './transform-rendered-chunk';
-import { logger } from '../cli/logger';
 import {
   measureHookCost,
   measureIfFunction,
   OUTPUT_OPTIONS_OWNER,
   type PluginTimingsRecorder,
 } from './plugin-timings';
+
+// perf/api-no-consola (PoC): the CLI logger loads consola, whose `string-width` builds an
+// `Intl.Segmenter` when it loads (about 6 ms). These deprecation warnings do not need consola, so the
+// JS API path no longer imports it. The warnings lose consola's `[WARN]` formatting.
+const logger = {
+  warn(message: string): void {
+    // oxlint-disable-next-line no-console
+    (process.env.ROLLDOWN_TEST ? console.log : console.warn)(message);
+  },
+};
 
 export function bindingifyOutputOptions(
   outputOptions: OutputOptions,
