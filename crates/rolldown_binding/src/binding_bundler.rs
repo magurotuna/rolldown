@@ -307,3 +307,14 @@ impl BindingBundler {
     }
   }
 }
+
+// perf/bun-gap N3 (PoC): the finalizer drops the last bundle (its `PluginDriver`) on a background thread.
+impl Drop for BindingBundler {
+  fn drop(&mut self) {
+    if crate::utils::bg_drop::enabled() {
+      let handles = std::mem::take(&mut self.bundle_handles);
+      let last = self.inner.bg_take_last_bundle_handle();
+      crate::utils::bg_drop::bg_drop((handles, last));
+    }
+  }
+}

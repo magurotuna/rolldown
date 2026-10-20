@@ -195,3 +195,14 @@ pub fn update_output_chunk(
   }
   Ok(())
 }
+
+// perf/bun-gap N3 (PoC): the finalizer drops the chunk (its rendered modules) on a background thread.
+impl Drop for BindingOutputChunk {
+  fn drop(&mut self) {
+    if crate::utils::bg_drop::enabled()
+      && let Some(inner) = self.inner.take()
+    {
+      crate::utils::bg_drop::bg_drop(inner);
+    }
+  }
+}

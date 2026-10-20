@@ -41,36 +41,65 @@ pub struct InnerBindingNames<'a> {
   /// Each module's scoping, and whether its root scope is an inner scope.
   scopings: Vec<(&'a Scoping, bool)>,
   names: OnceCell<IdentHashSet<'a>>,
+  /// perf/bun-gap R4 (PoC, `RD_BG_PAR_INNER_NAMES=1`): the same names, collected in parallel into one
+  /// set per rayon fold (no merge); `contains` asks every shard.
+  bg_shards: OnceCell<Vec<IdentHashSet<'a>>>,
 }
 
 impl<'a> InnerBindingNames<'a> {
   pub fn new(scopings: Vec<(&'a Scoping, bool)>) -> Self {
-    Self { scopings, names: OnceCell::new() }
+    Self { scopings, names: OnceCell::new(), bg_shards: OnceCell::new() }
   }
 
   fn contains(&self, name: &str) -> bool {
+    if rolldown_utils::bg_flag!("RD_BG_PAR_INNER_NAMES") {
+      use rolldown_utils::rayon::{IntoParallelRefIterator, ParallelIterator};
+      let ident = Ident::from(name);
+      return self
+        .bg_shards
+        .get_or_init(|| {
+          self
+            .scopings
+            .par_iter()
+            .fold(IdentHashSet::default, |mut names, (scoping, root_is_inner)| {
+              collect_inner_binding_names(scoping, *root_is_inner, &mut names);
+              names
+            })
+            .collect()
+        })
+        .iter()
+        .any(|names| names.contains(&ident));
+    }
     self
       .names
       .get_or_init(|| {
         let mut names = IdentHashSet::default();
         for (scoping, root_is_inner) in &self.scopings {
-          // Walk the symbol table rather than each scope's bindings map: it is one contiguous
-          // array, and nearly every symbol is a binding of some scope.
-          let root_scope_id = scoping.root_scope_id();
-          for symbol_id in scoping.symbol_ids() {
-            let name = scoping.symbol_ident(symbol_id);
-            if scoping.symbol_scope_id(symbol_id) == root_scope_id
-              // Facades are created in the root scope but never bound there.
-              && (!root_is_inner || scoping.get_binding(root_scope_id, name) != Some(symbol_id))
-            {
-              continue;
-            }
-            names.insert(name);
-          }
+          collect_inner_binding_names(scoping, *root_is_inner, &mut names);
         }
         names
       })
       .contains(&Ident::from(name))
+  }
+}
+
+fn collect_inner_binding_names<'a>(
+  scoping: &'a Scoping,
+  root_is_inner: bool,
+  names: &mut IdentHashSet<'a>,
+) {
+  // Walk the symbol table rather than each scope's bindings map: it is one contiguous
+  // array, and nearly every symbol is a binding of some scope.
+  let root_scope_id = scoping.root_scope_id();
+  for symbol_id in scoping.symbol_ids() {
+    let name = scoping.symbol_ident(symbol_id);
+    if scoping.symbol_scope_id(symbol_id) == root_scope_id
+      // Facades are created in the root scope but never bound there.
+      && (!root_is_inner || scoping.get_binding(root_scope_id, name) != Some(symbol_id))
+    {
+      continue;
+    }
+    names.insert(name);
   }
 }
 
