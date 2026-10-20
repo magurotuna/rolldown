@@ -56,6 +56,13 @@ impl BindingOutputChunk {
     }
   }
 
+  /// The byte length of `code`, for callers that need only the size and should not convert the code
+  /// to a JS string.
+  #[napi]
+  pub fn get_code_byte_length(&self) -> napi::Result<u32> {
+    byte_length(self.try_get_inner()?.code.len())
+  }
+
   #[napi]
   pub fn get_is_entry(&self) -> napi::Result<bool> {
     Ok(self.try_get_inner()?.is_entry)
@@ -187,4 +194,10 @@ pub fn update_output_chunk(
     });
   }
   Ok(())
+}
+
+/// A byte length as a JS number. An output of 4 GiB or more could not reach JS as one string anyway.
+pub(super) fn byte_length(len: usize) -> napi::Result<u32> {
+  u32::try_from(len)
+    .map_err(|_| napi::Error::from_reason(format!("An output of {len} bytes is too large")))
 }

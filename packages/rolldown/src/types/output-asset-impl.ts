@@ -12,6 +12,11 @@ export class OutputAssetImpl extends PlainObjectLike implements OutputAsset {
     super();
   }
 
+  /** The byte length of `asset.source`, read from Rust without converting the source to JS. */
+  static sourceByteLength(asset: OutputAssetImpl): number {
+    return asset.bindingAsset.getSourceByteLength();
+  }
+
   @lazyProp
   get fileName(): string {
     return this.bindingAsset.getFileName();

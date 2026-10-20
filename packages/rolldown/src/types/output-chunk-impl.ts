@@ -12,6 +12,11 @@ export class OutputChunkImpl extends PlainObjectLike implements OutputChunk {
     super();
   }
 
+  /** The byte length of `chunk.code`, read from Rust without converting the code to a JS string. */
+  static codeByteLength(chunk: OutputChunkImpl): number {
+    return chunk.bindingChunk.getCodeByteLength();
+  }
+
   @lazyProp
   get fileName(): string {
     return this.bindingChunk.getFileName();

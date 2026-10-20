@@ -87,6 +87,13 @@ impl BindingOutputAsset {
     Ok(source)
   }
 
+  /// The byte length of `source`, for callers that need only the size and should not convert the
+  /// source to JS.
+  #[napi]
+  pub fn get_source_byte_length(&self) -> napi::Result<u32> {
+    super::binding_output_chunk::byte_length(self.try_get_inner()?.source.as_bytes().len())
+  }
+
   #[napi]
   pub fn get_name(&self) -> napi::Result<Option<&str>> {
     Ok(self.try_get_inner()?.names.first().map(AsRef::as_ref))

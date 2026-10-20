@@ -11,6 +11,7 @@ import { onExit } from '../../utils/signal-exit';
 import { styleText } from '../../utils/style-text';
 import type { NormalizedCliOptions } from '../arguments/normalize';
 import { logger } from '../logger';
+import { outputByteLength } from '../output-byte-length';
 
 export async function bundleWithConfig(
   configPath: string,
@@ -203,7 +204,7 @@ function collectOutputEntries(output: RolldownOutput['output']): OutputEntry[] {
   return output.map((chunk) => ({
     type: chunk.type,
     fileName: chunk.fileName,
-    size: chunk.type === 'chunk' ? Buffer.byteLength(chunk.code) : Buffer.byteLength(chunk.source),
+    size: outputByteLength(chunk),
   }));
 }
 
