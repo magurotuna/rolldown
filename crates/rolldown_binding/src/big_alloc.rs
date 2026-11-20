@@ -166,10 +166,30 @@ pub fn init() {
   MIN.store(min, Ordering::Relaxed);
 }
 
+static COLLECT_MARKS: OnceLock<Vec<String>> = OnceLock::new();
+
+unsafe extern "C" {
+  fn mi_collect(force: bool);
+}
+
 /// Called at every mark of `rolldown_utils::mem_probe`.
+///
+/// `ROLLDOWN_MEM_COLLECT=<prefix>,...`: at the matching marks, call `mi_collect(true)`. It collects
+/// the pages of the calling thread and purges every arena range that waits for its purge delay.
 pub fn on_mark(name: &str) {
   if MARKS.get().is_some_and(|m| m.iter().any(|p| name.starts_with(p.as_str()))) {
     dump(name);
+  }
+  let collect = COLLECT_MARKS.get_or_init(|| {
+    std::env::var("ROLLDOWN_MEM_COLLECT")
+      .map(|v| v.split(',').map(|s| s.trim().to_string()).filter(|s| !s.is_empty()).collect())
+      .unwrap_or_default()
+  });
+  if collect.iter().any(|p| name.starts_with(p.as_str())) {
+    let start = std::time::Instant::now();
+    // SAFETY: `mi_collect` has no preconditions.
+    unsafe { mi_collect(true) };
+    rolldown_utils::mem_probe::mark(&format!("collected:{}us", start.elapsed().as_micros()));
   }
 }
 
