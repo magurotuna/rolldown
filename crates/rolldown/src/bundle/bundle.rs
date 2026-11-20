@@ -183,6 +183,7 @@ impl<Fs: FileSystem + Clone + 'static> Bundle<Fs> {
         .collect()
     };
 
+    rolldown_utils::mem_probe::mark("scan:done");
     let scan_stage_output = match self
       .normalize_scan_stage_output_and_update_cache(scan_stage_output, is_full_scan_mode)
       .await
@@ -413,10 +414,12 @@ impl<Fs: FileSystem + Clone + 'static> Bundle<Fs> {
   ) -> BuildResult<BundleOutput> {
     // The one stretch of a build with no plugin in it, which is what makes it a usable
     // baseline for "was this build plugin-bound?" — see `BuildTimings`.
+    rolldown_utils::mem_probe::mark("link:start");
     let link_start = self.plugin_driver.build_timings.start();
     let (mut link_stage_output, ast_table, used_symbol_refs_builder) =
       LinkStage::new(scan_stage_output, &self.options).link();
     self.plugin_driver.build_timings.record_link_stage(link_start);
+    rolldown_utils::mem_probe::mark("link:done");
 
     let bundle_output =
       GenerateStage::new(&mut link_stage_output, ast_table, &self.options, &self.plugin_driver)
@@ -433,6 +436,7 @@ impl<Fs: FileSystem + Clone + 'static> Bundle<Fs> {
     // for the cache merge); free the remaining heavy fields (module_table, metas,
     // stmt_infos, ...) off the critical path.
     crate::utils::defer_drop::spawn_drop(link_stage_output);
+    rolldown_utils::mem_probe::mark("generate:done");
 
     let mut output = match bundle_output {
       Ok(output) => output,
@@ -447,6 +451,7 @@ impl<Fs: FileSystem + Clone + 'static> Bundle<Fs> {
       .generate_bundle(&mut output.assets, is_write, &self.options, &mut output.warnings)
       .await?;
 
+    rolldown_utils::mem_probe::mark("generate_bundle:done");
     if let Err(errors) =
       GenerateStage::validate_mangle_properties_output(&self.options, &output.assets)
     {
