@@ -122,6 +122,13 @@ fn init() {
     not(target_env = "ohos")
   ))]
   ast_heap::init();
+  #[cfg(all(
+    not(target_family = "wasm"),
+    not(feature = "default_global_allocator"),
+    not(target_env = "ohos")
+  ))]
+  // SAFETY: `mi_collect` only walks the calling thread's own mimalloc heap.
+  rolldown_utils::allocator::set_collect_hook(|| unsafe { libmimalloc_sys2::mi_collect(true) });
 
   #[cfg(not(target_family = "wasm"))]
   {
