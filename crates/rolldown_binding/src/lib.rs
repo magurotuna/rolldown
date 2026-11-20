@@ -56,6 +56,12 @@ static ALLOC: rolldown_tracking_allocator::TrackingAllocator =
   not(target_env = "ohos")
 ))]
 mod ast_heap;
+#[cfg(all(
+  target_os = "linux",
+  not(feature = "default_global_allocator"),
+  not(target_env = "ohos")
+))]
+mod mem_probe_native;
 pub mod binding_bundler;
 pub mod binding_dev_engine;
 pub mod binding_dev_options;
@@ -123,6 +129,12 @@ fn init() {
   ))]
   ast_heap::init();
 
+  #[cfg(all(
+    target_os = "linux",
+    not(feature = "default_global_allocator"),
+    not(target_env = "ohos")
+  ))]
+  mem_probe_native::init();
   #[cfg(not(target_family = "wasm"))]
   {
     use napi::{bindgen_prelude::create_custom_tokio_runtime, tokio};
