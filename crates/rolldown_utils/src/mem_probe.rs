@@ -23,6 +23,7 @@ struct Config {
 
 static CONFIG: OnceLock<Option<Config>> = OnceLock::new();
 static ALLOC_PROBE: OnceLock<fn(bool) -> String> = OnceLock::new();
+static MARK_HOOK: OnceLock<fn(&str)> = OnceLock::new();
 
 fn config() -> Option<&'static Config> {
   CONFIG
@@ -58,6 +59,11 @@ fn status_kb(text: &str, key: &str) -> u64 {
     .unwrap_or(0)
 }
 
+/// Registers a function that runs at every mark, after the mark is written.
+pub fn set_mark_hook(hook: fn(&str)) {
+  let _ = MARK_HOOK.set(hook);
+}
+
 /// Appends a mark. See the module documentation.
 pub fn mark(name: &str) {
   let Some(cfg) = config() else { return };
@@ -89,5 +95,8 @@ pub fn mark(name: &str) {
   line.push_str("}\n");
   if let Ok(mut file) = cfg.file.lock() {
     let _ = file.write_all(line.as_bytes());
+  }
+  if let Some(hook) = MARK_HOOK.get() {
+    hook(name);
   }
 }
