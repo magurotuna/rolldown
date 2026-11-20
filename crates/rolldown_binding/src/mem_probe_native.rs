@@ -1,28 +1,17 @@
 //! Allocator probe for `rolldown_utils::mem_probe`. Not for upstream.
 //!
 //! Reports `mi_process_info` (current and peak commit of mimalloc), the live bytes of the tracking
-//! allocator (when built with `tracking_allocator`), and, when asked, a walk of the pages of every
-//! mimalloc heap in the main subprocess (`mi_subproc_visit_heaps` + `mi_heap_visit_blocks`). The
-//! walk does not stop other threads, so its numbers are approximate.
+//! allocator (when built with `tracking_allocator`), and, when asked, the statistics of every
+//! mimalloc heap in the main subprocess (`mi_subproc_visit_heaps` + `mi_heap_stats_get_json`). The
+//! statistics of a thread reach its heap after 4 MiB of churn, so they lag behind.
 //!
 //! `ROLLDOWN_MEM_SAMPLER=<path>[:<ms>]` starts a thread that writes `t_ms,rss_kb,mi_commit` every
 //! `<ms>` (default 20) milliseconds.
 use std::{
-  ffi::c_void,
+  ffi::{c_char, c_void},
   fmt::Write as _,
   time::{SystemTime, UNIX_EPOCH},
 };
-
-#[repr(C)]
-struct MiHeapArea {
-  blocks: *mut c_void,
-  reserved: usize,
-  committed: usize,
-  used: usize,
-  block_size: usize,
-  full_block_size: usize,
-  reserved1: *mut c_void,
-}
 
 #[repr(C)]
 #[derive(Clone, Copy)]
@@ -30,17 +19,10 @@ struct MiSubprocId {
   _id: *mut c_void,
 }
 
-type MiBlockVisit =
-  unsafe extern "C" fn(*const c_void, *const MiHeapArea, *mut c_void, usize, *mut c_void) -> bool;
 type MiHeapVisit = unsafe extern "C" fn(*mut c_void, *mut c_void) -> bool;
 
 unsafe extern "C" {
-  fn mi_heap_visit_blocks(
-    heap: *mut c_void,
-    visit_blocks: bool,
-    visitor: MiBlockVisit,
-    arg: *mut c_void,
-  ) -> bool;
+  fn mi_heap_stats_get_json(heap: *mut c_void, buf_size: usize, buf: *mut c_char) -> *mut c_char;
   fn mi_subproc_main() -> MiSubprocId;
   fn mi_subproc_visit_heaps(subproc: MiSubprocId, visitor: MiHeapVisit, arg: *mut c_void) -> bool;
   fn mi_heap_main() -> *mut c_void;
@@ -56,73 +38,37 @@ unsafe extern "C" {
   );
 }
 
-const BUCKET_LIMITS: [usize; 6] = [1 << 10, 8 << 10, 64 << 10, 512 << 10, 4 << 20, usize::MAX];
-const BUCKET_NAMES: [&str; 6] = ["le1K", "le8K", "le64K", "le512K", "le4M", "gt4M"];
-
-#[derive(Default)]
-struct HeapAcc {
-  pages: [u64; 6],
-  reserved: [u64; 6],
-  committed: [u64; 6],
-  used: [u64; 6],
-  /// Occupancy deciles (used / committed), weighted by the committed bytes.
-  hist: [u64; 10],
-}
-
-unsafe extern "C" fn visit_area(
-  _heap: *const c_void,
-  area: *const MiHeapArea,
-  block: *mut c_void,
-  _block_size: usize,
-  arg: *mut c_void,
-) -> bool {
-  if !block.is_null() || area.is_null() {
-    return true;
-  }
-  // SAFETY: mimalloc passes a valid area, and `arg` is our `HeapAcc`.
-  let (a, acc) = unsafe { (&*area, &mut *arg.cast::<HeapAcc>()) };
-  let used = (a.used * a.full_block_size) as u64;
-  let b = BUCKET_LIMITS.iter().position(|&l| a.full_block_size <= l).unwrap_or(5);
-  acc.pages[b] += 1;
-  acc.reserved[b] += a.reserved as u64;
-  acc.committed[b] += a.committed as u64;
-  acc.used[b] += used;
-  if a.committed > 0 {
-    let d = ((used * 10) / a.committed as u64).min(9) as usize;
-    acc.hist[d] += a.committed as u64;
-  }
-  true
-}
+/// Size of the buffer for one `mi_heap_stats_get_json` result. The JSON has about 230 lines.
+const STATS_BUF: usize = 64 << 10;
 
 struct Heaps {
   main: *mut c_void,
+  buf: Vec<u8>,
   out: String,
 }
 
+/// Appends the statistics of one heap. `mi_heap_stats_get_json` only reads the counters of the heap
+/// (and merges the statistics of the calling thread into them), so it is safe while other threads
+/// allocate. Do not use `mi_heap_visit_blocks` here: it collects the free lists of pages that other
+/// threads own, which corrupts the heap (`arena-page.c`, `mi_heap_visit_page`).
 unsafe extern "C" fn visit_heap(heap: *mut c_void, arg: *mut c_void) -> bool {
   // SAFETY: `arg` is our `Heaps`.
   let heaps = unsafe { &mut *arg.cast::<Heaps>() };
-  let mut acc = HeapAcc::default();
-  // SAFETY: `heap` is a live heap that mimalloc passes to the visitor.
-  unsafe { mi_heap_visit_blocks(heap, false, visit_area, (&raw mut acc).cast()) };
+  heaps.buf.fill(0);
+  // SAFETY: `heap` is a live heap that mimalloc passes to the visitor; the buffer is writable.
+  let json =
+    unsafe { mi_heap_stats_get_json(heap, heaps.buf.len(), heaps.buf.as_mut_ptr().cast()) };
+  if json.is_null() {
+    return true;
+  }
+  let len = heaps.buf.iter().position(|&b| b == 0).unwrap_or(heaps.buf.len());
+  let text = String::from_utf8_lossy(&heaps.buf[..len]);
   let label = if heap == heaps.main { "main".to_string() } else { format!("{heap:p}") };
   if !heaps.out.is_empty() {
     heaps.out.push(',');
   }
-  let _ = write!(heaps.out, "\"{label}\":{{");
-  for i in 0..6 {
-    let _ = write!(
-      heaps.out,
-      "{}\"{}\":[{},{},{},{}]",
-      if i > 0 { "," } else { "" },
-      BUCKET_NAMES[i],
-      acc.pages[i],
-      acc.reserved[i],
-      acc.committed[i],
-      acc.used[i]
-    );
-  }
-  let _ = write!(heaps.out, ",\"hist\":{:?}}}", acc.hist);
+  let _ = write!(heaps.out, "\"{label}\":");
+  heaps.out.extend(text.chars().filter(|c| !c.is_whitespace()));
   true
 }
 
@@ -142,8 +88,9 @@ fn probe(walk: bool) -> String {
   let mut out = format!("{{\"mi_commit\":{c},\"mi_peak_commit\":{pc},\"live\":{live}");
   if walk {
     // SAFETY: `mi_heap_main` has no preconditions.
-    let mut heaps = Heaps { main: unsafe { mi_heap_main() }, out: String::new() };
-    // SAFETY: the visitor only reads the heaps; `heaps` outlives the call.
+    let main = unsafe { mi_heap_main() };
+    let mut heaps = Heaps { main, buf: vec![0; STATS_BUF], out: String::new() };
+    // SAFETY: the visitor only reads the heap statistics; `heaps` outlives the call.
     unsafe { mi_subproc_visit_heaps(mi_subproc_main(), visit_heap, (&raw mut heaps).cast()) };
     let _ = write!(out, ",\"heaps\":{{{}}}", heaps.out);
   }
