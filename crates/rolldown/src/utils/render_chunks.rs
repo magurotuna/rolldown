@@ -140,11 +140,14 @@ struct MinifyJob {
 
 impl MinifyJob {
   fn run(self, minifier: &ChunkMinifier) -> BuildResult<(String, Option<SourceMap>)> {
-    let map = match chain_render_chunk_sourcemaps(self.map.as_ref(), &self.sourcemaps) {
-      Some(chained) => Some(chained),
-      None => self.map,
-    };
-    let (code, minified_map) = minifier.minify(&self.code, map.as_ref(), &self.filename)?;
+    let Self { code, map, sourcemaps, filename } = self;
+    // Only the chained map is read from here on. `Option::or` drops the chunk's map when there is
+    // a chained map, and the hooks' maps are dropped next, so both are freed before
+    // minification. For a large chunk, these maps hold millions of tokens, and the memory of a
+    // large build often peaks while its largest chunk is minified.
+    let map = chain_render_chunk_sourcemaps(map.as_ref(), &sourcemaps).or(map);
+    drop(sourcemaps);
+    let (code, minified_map) = minifier.minify(&code, map.as_ref(), &filename)?;
     // The chunk keeps its map when minification makes none.
     Ok((code, minified_map.or(map)))
   }
