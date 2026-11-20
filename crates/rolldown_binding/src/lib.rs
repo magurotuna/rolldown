@@ -28,12 +28,23 @@ use napi_derive::napi;
 
 #[cfg(all(
   not(target_family = "wasm"),
+  not(target_os = "linux"),
   not(feature = "default_global_allocator"),
   not(target_env = "ohos"),
   not(feature = "tracking_allocator")
 ))]
 #[global_allocator]
 static ALLOC: mimalloc_safe::MiMalloc = mimalloc_safe::MiMalloc;
+
+// Probe builds: mimalloc, plus a table of the live big allocations (`big_alloc.rs`).
+#[cfg(all(
+  target_os = "linux",
+  not(feature = "default_global_allocator"),
+  not(target_env = "ohos"),
+  not(feature = "tracking_allocator")
+))]
+#[global_allocator]
+static ALLOC: big_alloc::BigAllocTracker = big_alloc::BigAllocTracker;
 
 // Same mimalloc, wrapped with allocation counters. The counters are read
 // through `getNativeMemoryStats()` in `native_memory.rs`; the cfg there must
@@ -62,6 +73,13 @@ mod ast_heap;
   not(target_env = "ohos")
 ))]
 mod mem_probe_native;
+#[cfg(all(
+  target_os = "linux",
+  not(feature = "default_global_allocator"),
+  not(target_env = "ohos"),
+  not(feature = "tracking_allocator")
+))]
+mod big_alloc;
 pub mod binding_bundler;
 pub mod binding_dev_engine;
 pub mod binding_dev_options;
@@ -134,7 +152,11 @@ fn init() {
     not(feature = "default_global_allocator"),
     not(target_env = "ohos")
   ))]
-  mem_probe_native::init();
+  {
+    #[cfg(not(feature = "tracking_allocator"))]
+    big_alloc::init();
+    mem_probe_native::init();
+  }
   #[cfg(not(target_family = "wasm"))]
   {
     use napi::{bindgen_prelude::create_custom_tokio_runtime, tokio};
