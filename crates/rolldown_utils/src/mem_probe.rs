@@ -6,7 +6,7 @@
 //! `OnceLock`.
 //!
 //! - `ROLLDOWN_MEM_PROBE_PAGES=all|<prefix>,<prefix>`: for the matching marks, the allocator probe
-//!   also walks the pages of every allocator heap (slow: it visits every page).
+//!   also reports the statistics of every allocator heap.
 //! - `ROLLDOWN_MEM_PROBE_SMAPS=1`: adds `AnonHugePages` and `Anonymous` from
 //!   `/proc/self/smaps_rollup` (Linux only).
 use std::{
