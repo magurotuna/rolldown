@@ -100,6 +100,13 @@ fn probe(walk: bool) -> String {
 
 pub fn init() {
   rolldown_utils::mem_probe::set_alloc_probe(probe);
+  #[cfg(not(feature = "tracking_allocator"))]
+  rolldown_utils::mem_probe::set_mark_hook(crate::big_alloc::on_mark);
+  #[cfg(not(feature = "tracking_allocator"))]
+  let big_peak = std::env::var("ROLLDOWN_MEM_BIG_PEAK_GIB")
+    .ok()
+    .and_then(|v| v.parse::<f64>().ok())
+    .map(|g| (g * 1048576.0) as u64);
   let Ok(spec) = std::env::var("ROLLDOWN_MEM_SAMPLER") else { return };
   let (path, ms) = match spec.rsplit_once(':') {
     Some((p, m)) if m.parse::<u64>().is_ok() => (p.to_string(), m.parse::<u64>().unwrap_or(20)),
@@ -109,12 +116,21 @@ pub fn init() {
     use std::io::Write as _;
     let Ok(mut file) = std::fs::File::create(&path) else { return };
     let _ = writeln!(file, "t_ms,rss_kb,mi_commit");
+    let mut last_dump_kb = 0u64;
     loop {
       let t = SystemTime::now().duration_since(UNIX_EPOCH).map_or(0, |d| d.as_millis());
       let status = std::fs::read_to_string("/proc/self/statm").unwrap_or_default();
       let rss_pages: u64 =
         status.split_whitespace().nth(1).and_then(|v| v.parse().ok()).unwrap_or(0);
       let _ = writeln!(file, "{t},{},{}", rss_pages * 4, commit().0);
+      #[cfg(not(feature = "tracking_allocator"))]
+      if let Some(min_kb) = big_peak {
+        let rss_kb = rss_pages * 4;
+        if rss_kb >= min_kb && rss_kb >= last_dump_kb + 262_144 {
+          last_dump_kb = rss_kb;
+          crate::big_alloc::dump(&format!("rss_kb={rss_kb}"));
+        }
+      }
       std::thread::sleep(std::time::Duration::from_millis(ms));
     }
   });
