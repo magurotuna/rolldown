@@ -45,6 +45,7 @@ impl GenerateStage<'_> {
     // fates finally diverge (errors -> `Err`, warnings -> `BundleOutput`).
     let mut diagnostics = std::mem::take(&mut self.link_output.diagnostics);
     let inline_renders = std::mem::take(&mut self.inline_renders);
+    rolldown_utils::mem_probe::mark("render:start");
     // `ast_table` is threaded by value into `create_chunk_to_codegen_ret_map`
     // (the last reader), which frees each module's AST as soon as it is printed
     // and drops the rest at scope exit — releasing the per-module bumpalo arenas
@@ -60,6 +61,7 @@ impl GenerateStage<'_> {
       )
       .await?;
 
+    rolldown_utils::mem_probe::mark("render:instantiated");
     self.trace_action_package_graph_ready(chunk_graph, &instantiated_chunks);
     self.trace_action_module_rendered(&instantiated_chunks);
 
@@ -78,6 +80,7 @@ impl GenerateStage<'_> {
       .await?,
     );
 
+    rolldown_utils::mem_probe::mark("render:chunks_rendered");
     augment_chunk_hash(self.plugin_driver, &mut instantiated_chunks).await?;
 
     let mangle_cache = minifier.and_then(|minifier| {
@@ -97,6 +100,7 @@ impl GenerateStage<'_> {
     )
     .await?;
 
+    rolldown_utils::mem_probe::mark("render:finalized");
     // Set emitted chunk info for file emitter, it should be set before call generate_bundle hook
     set_emitted_chunk_filenames(&self.plugin_driver.file_emitter, &assets, chunk_graph);
 
