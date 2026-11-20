@@ -102,7 +102,7 @@ pub fn compose_sourcemap_run(
   let (sources, source_contents) = copy_sources(first_map, None);
   let names = copy_names(sourcemap_chain, None);
   let source_root = first_map.get_source_root().map(owned);
-  Some(SourceMap::new(None, names, source_root, sources, source_contents, tokens, None))
+  Some(SourceMap::new(None, names, source_root, sources, source_contents, tokens))
 }
 
 fn has_sorted_tokens(map: &oxc_sourcemap::SourceMap<'_>) -> bool {
@@ -1043,12 +1043,11 @@ fn test_compose_sourcemap_run_keeps_a_token_at_each_position_of_the_last_map() {
     None,
     vec![Some("first.js".into())],
     vec![None],
-    Box::new([
+    vec![
       Token::new(0, 0, 0, 0, None, None),
       Token::new(0, 3, 0, 0, None, None),
       Token::new(0, 3, 0, 4, Some(0), None),
-    ]),
-    None,
+    ],
   );
 
   let composed = compose_sourcemap_run(&[&first_map, &last_map]).unwrap();
@@ -1072,8 +1071,7 @@ fn test_compose_sourcemap_run_returns_none_for_an_unsorted_earlier_map() {
       None,
       vec![Some("source.js".into())],
       vec![None],
-      columns.iter().map(|&column| Token::new(0, column, 0, column, Some(0), None)).collect(),
-      None,
+      columns.iter().map(|&column| Token::new(0, column, 0, column, Some(0), None)).collect::<Vec<_>>()
     )
   };
   let sorted = map(&[0, 2, 4]);
@@ -1098,8 +1096,7 @@ fn test_compose_sourcemap_run_returns_none_when_a_lookup_depends_on_the_lookup_o
       tokens
         .iter()
         .map(|&(dst_col, src_col)| Token::new(0, dst_col, 0, src_col, Some(0), None))
-        .collect(),
-      None,
+        .collect::<Vec<_>>()
     )
   };
   // The columns of this line are in reverse order.
@@ -1182,8 +1179,7 @@ fn test_compose_sourcemap_run_matches_the_whole_run_for_random_chains() {
       if random.below(4) == 0 { Some(format!("{label}-root/").into()) } else { None },
       (0..source_count).map(|i| Some(format!("{label}-{i}.js").into())).collect(),
       (0..source_count).map(|_| None).collect(),
-      tokens.into_boxed_slice(),
-      None,
+      tokens.into_boxed_slice()
     )
   }
 
