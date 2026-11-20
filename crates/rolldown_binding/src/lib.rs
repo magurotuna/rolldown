@@ -62,6 +62,7 @@ pub mod binding_dev_options;
 pub mod binding_watcher_bundler;
 pub mod classic_bundler;
 mod generated;
+pub mod memory_reclaim;
 pub mod native_memory;
 pub mod options;
 #[cfg(not(target_family = "wasm"))]
@@ -138,6 +139,7 @@ fn init() {
     // Module tasks parse on these threads, so they allocate from the AST heap.
     #[cfg(all(not(feature = "default_global_allocator"), not(target_env = "ohos")))]
     builder.on_thread_stop(ast_heap::release_current_thread);
+    let reclaim_memory = crate::memory_reclaim::configure();
 
     let rt = builder
       .max_blocking_threads(max_blocking_threads)
@@ -146,6 +148,9 @@ fn init() {
       .enable_all()
       .build()
       .expect("Failed to create tokio runtime");
+    if reclaim_memory {
+      crate::memory_reclaim::init(rt.handle().clone(), max_blocking_threads);
+    }
     create_custom_tokio_runtime(rt);
   }
 
