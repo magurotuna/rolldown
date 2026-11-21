@@ -30,10 +30,46 @@ use napi_derive::napi;
   not(target_family = "wasm"),
   not(feature = "default_global_allocator"),
   not(target_env = "ohos"),
-  not(feature = "tracking_allocator")
+  not(feature = "tracking_allocator"),
+  not(feature = "jemalloc")
 ))]
 #[global_allocator]
 static ALLOC: mimalloc_safe::MiMalloc = mimalloc_safe::MiMalloc;
+
+#[cfg(all(
+  feature = "jemalloc",
+  any(
+    not(target_os = "linux"),
+    target_env = "ohos",
+    feature = "default_global_allocator",
+    feature = "tracking_allocator"
+  )
+))]
+compile_error!(
+  "the `jemalloc` feature is for Linux only, and cannot be combined with `default_global_allocator` or `tracking_allocator`"
+);
+
+// Opt-in jemalloc. See internal-docs/global-allocator/design.md
+#[cfg(all(feature = "jemalloc", target_os = "linux", not(target_env = "ohos")))]
+#[global_allocator]
+static ALLOC: tikv_jemallocator::Jemalloc = tikv_jemallocator::Jemalloc;
+
+/// The options that jemalloc reads at startup. `thp:never` keeps transparent huge pages off, so a
+/// purge returns memory at page granularity. `_RJEM_MALLOC_CONF` overrides these at run time.
+#[cfg(all(feature = "jemalloc", target_os = "linux", not(target_env = "ohos")))]
+#[unsafe(export_name = "_rjem_malloc_conf")]
+#[allow(non_upper_case_globals)]
+pub static malloc_conf: JemallocConf =
+  JemallocConf(c"thp:never,dirty_decay_ms:1000,muzzy_decay_ms:0,background_thread:true".as_ptr());
+
+/// A C string pointer with the layout of jemalloc's `const char *malloc_conf`.
+#[cfg(all(feature = "jemalloc", target_os = "linux", not(target_env = "ohos")))]
+#[repr(transparent)]
+pub struct JemallocConf(*const std::ffi::c_char);
+
+// SAFETY: the pointer is to a static string that is never written.
+#[cfg(all(feature = "jemalloc", target_os = "linux", not(target_env = "ohos")))]
+unsafe impl Sync for JemallocConf {}
 
 // Same mimalloc, wrapped with allocation counters. The counters are read
 // through `getNativeMemoryStats()` in `native_memory.rs`; the cfg there must
