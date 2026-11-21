@@ -74,6 +74,9 @@ pub async fn render_chunks(
           chunks,
         })
         .await?;
+      if code.len() >= (4 << 20) {
+        rolldown_utils::mem_probe::mark(&format!("hook_done:{}", code.len()));
+      }
 
       let minified = match minifier {
         Some(minifier) if ChunkMinifier::should_minify(asset) => {
@@ -98,6 +101,7 @@ pub async fn render_chunks(
     }
   }))
   .await?;
+  rolldown_utils::mem_probe::mark("render:hooks_done");
 
   // Taken in chunk order, so warnings keep their order.
   rendered.sort_unstable_by_key(|(index, ..)| *index);
@@ -140,6 +144,19 @@ struct MinifyJob {
 
 impl MinifyJob {
   fn run(self, minifier: &ChunkMinifier) -> BuildResult<(String, Option<SourceMap>)> {
+    let big = self.code.len() >= (4 << 20);
+    let len = self.code.len();
+    if big {
+      rolldown_utils::mem_probe::mark(&format!("minify:start:{len}"));
+    }
+    let result = self.run_inner(minifier);
+    if big {
+      rolldown_utils::mem_probe::mark(&format!("minify:end:{len}"));
+    }
+    result
+  }
+
+  fn run_inner(self, minifier: &ChunkMinifier) -> BuildResult<(String, Option<SourceMap>)> {
     let Self { code, map, sourcemaps, filename } = self;
     // Only the chained map is read from here on. `Option::or` drops the chunk's map when there is
     // a chained map, and the hooks' maps are dropped next, so both are freed before
