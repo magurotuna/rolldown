@@ -93,7 +93,9 @@ rolldown_tracking_allocator = { workspace = true, optional = true }
 
 # Opt-in jemalloc, see `jemalloc` in `[features]`.
 [target.'cfg(all(target_os = "linux", not(target_env = "ohos")))'.dependencies]
-tikv-jemallocator = { workspace = true, optional = true }
+# The binding is loaded with `dlopen`, so jemalloc cannot use initial-exec TLS (as mimalloc uses
+# `local_dynamic_tls` above).
+tikv-jemallocator = { workspace = true, optional = true, features = ["disable_initial_exec_tls"] }
 
 [build-dependencies]
 napi-build = { workspace = true }
