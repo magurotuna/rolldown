@@ -91,12 +91,20 @@ mimalloc-safe = { workspace = true, features = [
 ] }
 rolldown_tracking_allocator = { workspace = true, optional = true }
 
+# Opt-in jemalloc, see `jemalloc` in `[features]`.
+[target.'cfg(all(target_os = "linux", not(target_env = "ohos")))'.dependencies]
+tikv-jemallocator = { workspace = true, optional = true }
+
 [build-dependencies]
 napi-build = { workspace = true }
 
 [features]
 chrome-tracing = ["rolldown_tracing/chrome-tracing"]
 default_global_allocator = []
+# Use jemalloc instead of mimalloc as the global allocator, with transparent huge pages off. Linux
+# only, and not with `default_global_allocator` or `tracking_allocator`.
+# See internal-docs/global-allocator/design.md
+jemalloc = ["dep:tikv-jemallocator"]
 disable_panic_hook = []
 # Wrap mimalloc with allocation counters exposed via `getNativeMemoryStats()`.
 # Costs a few atomic ops per allocation, so it is off by default.
