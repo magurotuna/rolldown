@@ -1,0 +1,35 @@
+use std::fs;
+
+use oxc_sourcemap::{SourceMap, SourcemapVisualizer, Token};
+
+#[test]
+fn snapshot_sourcemap_visualizer() {
+    insta::glob!("fixtures/**/*.js", |path| {
+        let js = fs::read_to_string(path).unwrap();
+        let js_map = fs::read_to_string(path.with_added_extension("map")).unwrap();
+        let sourcemap = SourceMap::from_json_string(&js_map).unwrap();
+        let visualizer_text = SourcemapVisualizer::new(&js, &sourcemap).get_text();
+        insta::with_settings!({ snapshot_path => path.parent().unwrap(), prepend_module_to_snapshot => false, snapshot_suffix => "", omit_expression => true }, {
+            insta::assert_snapshot!("visualizer", visualizer_text);
+        });
+    });
+}
+
+#[test]
+fn invalid_token_position() {
+    let sourcemap = SourceMap::new(
+        None,
+        vec![],
+        None,
+        vec![Some("src.js".into())],
+        vec![Some("abc\ndef".into())],
+        vec![
+            Token::new(0, 0, 0, 0, Some(0), None),
+            Token::new(0, 10, 0, 0, Some(0), None),
+            Token::new(0, 0, 0, 10, Some(0), None),
+        ],
+    );
+    let js = "abc\ndef\n";
+    let visualizer_text = SourcemapVisualizer::new(js, &sourcemap).get_text();
+    insta::assert_snapshot!("invalid_token_position", visualizer_text);
+}

@@ -1,5 +1,7 @@
 [workspace]
 members = ["./crates/*", "tasks/*"]
+# Experiment: a copy of oxc-sourcemap (see the patch section).
+exclude = ["vendor/oxc_sourcemap"]
 resolver = "3"
 
 [workspace.package]
@@ -311,7 +313,8 @@ oxc_sourcemap = { version = "10.0.0" } # https://github.com/oxc-project/oxc-sour
 
 [patch.crates-io]
 # TODO: remove after oxc-project/oxc-sourcemap#520 and oxc-project/oxc#29808 are released.
-oxc_sourcemap = { git = "https://github.com/oxc-project/oxc-sourcemap", branch = "packed-sourcemap" }
+# Experiment: oxc-sourcemap `packed-sourcemap` (460ce1b) with a `LookupCursor` that decodes lines on demand.
+oxc_sourcemap = { path = "vendor/oxc_sourcemap" }
 oxc = { git = "https://github.com/magurotuna/oxc.git", branch = "exp/packed-sourcemap-chunk-alloc" }
 oxc_allocator = { git = "https://github.com/magurotuna/oxc.git", branch = "exp/packed-sourcemap-chunk-alloc" }
 oxc_ast = { git = "https://github.com/magurotuna/oxc.git", branch = "exp/packed-sourcemap-chunk-alloc" }
