@@ -9,7 +9,7 @@ The binding uses mimalloc as the global allocator by default. The `jemalloc` car
 1. **mimalloc stays the default.** The effect of jemalloc on build time depends on the project and the machine. In the measurements below, it ranges from 6% faster to 9% slower.
 2. **jemalloc runs with THP off.** On Linux with THP set to `always`, the kernel maps a whole 2 MiB huge page on the first touch. With THP on, jemalloc returns only parts of huge pages. RSS then drops, but the memory stays charged to the cgroup until the kernel splits the huge page (deferred split). With `thp:never`, the memory that jemalloc purges leaves the process and the cgroup.
 3. **The options are compiled in.** `malloc_conf` in `crates/rolldown_binding/src/lib.rs` sets `thp:never,dirty_decay_ms:1000,muzzy_decay_ms:0,background_thread:true`. `_RJEM_MALLOC_CONF` overrides them at run time.
-4. **The feature excludes the other allocator features.** `default_global_allocator` and `tracking_allocator` also choose the global allocator, so a build with two of them stops with a `compile_error!`.
+4. **The other allocator features take precedence.** `default_global_allocator` and `tracking_allocator` also choose the global allocator. The binding compiles in one global allocator, in this order: `default_global_allocator`, `tracking_allocator`, `jemalloc`, mimalloc. So `cargo check --all-features` (`just lint-rust`) builds with the system allocator, as it does without this feature. On a platform other than Linux, the `jemalloc` feature has no effect.
 
 ## Measurements
 

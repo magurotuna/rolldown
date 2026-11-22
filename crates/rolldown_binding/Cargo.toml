@@ -104,7 +104,7 @@ napi-build = { workspace = true }
 chrome-tracing = ["rolldown_tracing/chrome-tracing"]
 default_global_allocator = []
 # Use jemalloc instead of mimalloc as the global allocator, with transparent huge pages off. Linux
-# only, and not with `default_global_allocator` or `tracking_allocator`.
+# only. `default_global_allocator` and `tracking_allocator` take precedence over this feature.
 # See internal-docs/global-allocator/design.md
 jemalloc = ["dep:tikv-jemallocator"]
 disable_panic_hook = []
