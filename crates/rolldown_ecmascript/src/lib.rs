@@ -2,6 +2,7 @@ mod ast_arena;
 mod constants;
 mod ecma_ast;
 mod ecma_compiler;
+mod temp_heap;
 
 pub use crate::{
   ast_arena::{ast_allocator, set_ast_chunk_allocator},
@@ -14,4 +15,5 @@ pub use crate::{
     EcmaAst, ToSourceString, program_cell::WithMutFields, semantic_builder_for_transform,
   },
   ecma_compiler::{EcmaCompiler, PrintCommentsOptions, PrintOptions},
+  temp_heap::{TempHeapRunner, set_temp_heap_runner, with_largest_minify_allocator},
 };

@@ -5,7 +5,7 @@ use oxc::{
   minifier::{ManglePropertyCache, MinifierOptions as OxcMinifierOptions},
   span::SourceType,
 };
-use oxc_allocator::AllocatorPool;
+use oxc_allocator::{Allocator, AllocatorPool};
 use rolldown_common::{InstantiatedChunk, MinifyOptions, NormalizedBundlerOptions, Output};
 use rolldown_ecmascript::EcmaCompiler;
 use rolldown_error::{BuildDiagnostic, BuildResult, InvalidOptionType};
@@ -76,17 +76,27 @@ impl ChunkMinifier {
   }
 
   /// Minifies one chunk's code, returning the new code and its map chained onto `map`.
+  ///
+  /// Uses `allocator` if given, otherwise an allocator from the pool.
   #[tracing::instrument(level = "debug", skip_all)]
   pub fn minify(
     &self,
     content: &str,
     map: Option<&SourceMap>,
     filename: &str,
+    allocator: Option<&Allocator>,
   ) -> BuildResult<(String, Option<SourceMap>)> {
-    let allocator_guard = self.allocator_pool.get();
+    let allocator_guard;
+    let allocator = match allocator {
+      Some(allocator) => allocator,
+      None => {
+        allocator_guard = self.allocator_pool.get();
+        &*allocator_guard
+      }
+    };
     // TODO: Do we need to ensure `chunk.preliminary_filename` to be absolute path?
     let (minified_content, new_map, chunk_property_mangle_cache) = EcmaCompiler::dce_or_minify(
-      &allocator_guard,
+      allocator,
       content,
       self.source_type,
       map.is_some(),

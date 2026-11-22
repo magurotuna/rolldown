@@ -50,6 +50,16 @@ pub async fn render_chunks(
   let minified_len = |asset: &InstantiatedChunk| {
     if ChunkMinifier::should_minify(asset) { asset.content.as_bytes().len() } else { 0 }
   };
+  // Experiment: the largest chunk to minify can use its own arena and heap
+  // (`rolldown_ecmascript::with_largest_minify_allocator`).
+  let largest = minifier.and_then(|_| {
+    assets
+      .iter()
+      .enumerate()
+      .filter(|(_, asset)| minified_len(asset) > 0)
+      .max_by_key(|(_, asset)| minified_len(asset))
+      .map(|(index, _)| index)
+  });
   let mut order = assets.iter_mut().enumerate().collect::<Vec<_>>();
   if minifier.is_some() && order.len() > SHARES {
     let share = order.iter().map(|(_, asset)| minified_len(asset)).sum::<usize>() / SHARES;
@@ -82,6 +92,7 @@ pub async fn render_chunks(
             map: asset.map.take(),
             sourcemaps,
             filename: asset.preliminary_filename.to_string(),
+            largest: largest == Some(index),
           };
           let minifier = Arc::clone(minifier);
           Some(spawn_on_rayon(move || job.run(&minifier)))
@@ -136,18 +147,35 @@ struct MinifyJob {
   map: Option<SourceMap>,
   sourcemaps: Vec<SourceMap>,
   filename: String,
+  largest: bool,
 }
 
 impl MinifyJob {
   fn run(self, minifier: &ChunkMinifier) -> BuildResult<(String, Option<SourceMap>)> {
-    let Self { code, map, sourcemaps, filename } = self;
+    let Self { code, map, sourcemaps, filename, largest } = self;
+    if largest {
+      return rolldown_ecmascript::with_largest_minify_allocator(|allocator| {
+        Self::minify(&code, map, sourcemaps, &filename, minifier, allocator)
+      });
+    }
+    Self::minify(&code, map, sourcemaps, &filename, minifier, None)
+  }
+
+  fn minify(
+    code: &str,
+    map: Option<SourceMap>,
+    sourcemaps: Vec<SourceMap>,
+    filename: &str,
+    minifier: &ChunkMinifier,
+    allocator: Option<&oxc_allocator::Allocator>,
+  ) -> BuildResult<(String, Option<SourceMap>)> {
     // Only the chained map is read from here on. `Option::or` drops the chunk's map when there is
     // a chained map, and the hooks' maps are dropped next, so both are freed before
     // minification: for a large chunk they hold millions of tokens, and minification is where the
     // memory of a build peaks.
     let map = chain_render_chunk_sourcemaps(map.as_ref(), &sourcemaps).or(map);
     drop(sourcemaps);
-    let (code, minified_map) = minifier.minify(&code, map.as_ref(), &filename)?;
+    let (code, minified_map) = minifier.minify(code, map.as_ref(), filename, allocator)?;
     // The chunk keeps its map when minification makes none.
     Ok((code, minified_map.or(map)))
   }

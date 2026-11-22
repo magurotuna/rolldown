@@ -18,7 +18,7 @@ use std::{
   sync::OnceLock,
 };
 
-use libmimalloc_sys2::{mi_free, mi_heap_malloc_aligned, mi_heap_new, mi_heap_t};
+use libmimalloc_sys2::{mi_free, mi_heap_delete, mi_heap_malloc_aligned, mi_heap_new, mi_heap_t};
 
 /// Thread-local part of a mimalloc heap (`mi_theap_t` in `mimalloc.h`).
 enum MiTheap {}
@@ -32,9 +32,13 @@ unsafe extern "C" {
   /// Owner thread only: abandon the pages of `theap` and delete it.
   /// The heap and the live blocks in it are kept.
   fn mi_theap_delete(theap: *mut MiTheap);
+  /// Set the theap that `malloc` (and the global allocator) of the calling thread allocates
+  /// from. Returns the previous one. (`mimalloc.h:395`)
+  fn mi_theap_set_default(theap: *mut MiTheap) -> *mut MiTheap;
 }
 
-/// A mimalloc heap which is never deleted.
+/// A mimalloc heap. The AST heap is never deleted. A temporary heap (see [`run_in_temp_heap`])
+/// outlives every arena which allocates from it.
 struct AstHeap(*mut mi_heap_t);
 
 // SAFETY: A mimalloc v3 heap can be used to allocate from any thread, and the
@@ -110,4 +114,57 @@ pub fn init() {
   }
   let ast_heap = AST_HEAP.get_or_init(|| AstHeap(heap));
   rolldown_ecmascript::set_ast_chunk_allocator(ast_heap);
+  rolldown_ecmascript::set_temp_heap_runner(run_in_temp_heap);
+}
+
+/// Experiment: runs `f` with a new mimalloc heap, then deletes the heap.
+///
+/// `mi_heap_delete` moves the pages with live blocks to the main heap, so blocks which outlive `f`
+/// (its result, statics initialized in `f`) stay valid. Pages with no live blocks go back to the
+/// arena at once.
+///
+/// If `whole_thread` is true, the calling thread allocates from the heap while `f` runs, through
+/// `mi_theap_set_default`. Otherwise `f` gets an allocator for the heap, which must be dropped
+/// before `f` returns (the heap is deleted after `f`).
+///
+/// See `rolldown_ecmascript::with_largest_minify_allocator`.
+pub fn run_in_temp_heap(
+  whole_thread: bool,
+  f: &mut dyn FnMut(Option<&'static (dyn GlobalAlloc + Sync)>),
+) {
+  struct Guard {
+    heap: *mut mi_heap_t,
+    previous_theap: Option<*mut MiTheap>,
+  }
+  impl Drop for Guard {
+    fn drop(&mut self) {
+      // SAFETY: `previous_theap` was the calling thread's default theap, and it is still live.
+      // `self.heap` was returned by `mi_heap_new` and is deleted only here. After the default
+      // theap is restored, the thread no longer allocates from the heap.
+      unsafe {
+        if let Some(previous_theap) = self.previous_theap {
+          mi_theap_set_default(previous_theap);
+        }
+        mi_heap_delete(self.heap);
+      }
+    }
+  }
+
+  // SAFETY: `mi_heap_new` has no preconditions.
+  let heap = unsafe { mi_heap_new() };
+  if heap.is_null() {
+    f(None);
+    return;
+  }
+  let mut guard = Guard { heap, previous_theap: None };
+  if whole_thread {
+    // SAFETY: `heap` is live. `mi_heap_theap` returns the calling thread's theap of it.
+    guard.previous_theap = Some(unsafe { mi_theap_set_default(mi_heap_theap(heap)) });
+    f(None);
+  } else {
+    // Leaks one pointer-sized box for each call (one call for each build).
+    let chunk_alloc: &'static AstHeap = Box::leak(Box::new(AstHeap(heap)));
+    f(Some(chunk_alloc));
+  }
+  drop(guard);
 }
