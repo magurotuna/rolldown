@@ -60,8 +60,7 @@ static ALLOC: tikv_jemallocator::Jemalloc = tikv_jemallocator::Jemalloc;
   not(feature = "tracking_allocator")
 ))]
 #[unsafe(export_name = "_rjem_malloc_conf")]
-#[allow(non_upper_case_globals)]
-pub static malloc_conf: JemallocConf =
+pub static MALLOC_CONF: JemallocConf =
   JemallocConf(c"thp:never,dirty_decay_ms:1000,muzzy_decay_ms:0,background_thread:true".as_ptr());
 
 /// A C string pointer with the layout of jemalloc's `const char *malloc_conf`.
