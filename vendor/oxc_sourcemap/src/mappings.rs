@@ -619,33 +619,94 @@ fn apply(prev: u32, delta: i64) -> u32 {
     (i64::from(prev) + delta) as u32
 }
 
+/// Apply one stored token to `state` and return the token.
+#[inline(always)]
+fn step(state: &mut State, raw: &RawToken) -> Token {
+    if raw.tag & TAG_LINE != 0 {
+        state.dst_line = apply(state.dst_line, raw.dst_line);
+        state.dst_col = 0;
+    }
+    state.dst_col = apply(state.dst_col, raw.dst_col);
+
+    let mut token = Token::unmapped(state.dst_line, state.dst_col);
+    if raw.tag & TAG_MAPPED != 0 {
+        state.source_id = apply(state.source_id, raw.source_id);
+        state.src_line = apply(state.src_line, raw.src_line);
+        state.src_col = apply(state.src_col, raw.src_col);
+        token.source_id = state.source_id;
+        token.src_line = state.src_line;
+        token.src_col = state.src_col;
+    }
+    if raw.tag & TAG_NAMED != 0 {
+        state.name_id = apply(state.name_id, raw.name_id);
+        token.name_id = state.name_id;
+    }
+    token
+}
+
+/// Where a generated line starts in the stream of [`Mappings`]: enough to decode the tokens of
+/// the line without decoding the tokens before it.
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct LineStart {
+    /// Byte offset of the line's first token.
+    pos: u32,
+    /// The number of tokens before the line.
+    index: u32,
+    /// The state before the line's first token.
+    state: State,
+}
+
+impl LineStart {
+    pub(crate) fn index(&self) -> u32 {
+        self.index
+    }
+}
+
+impl Mappings {
+    /// The start of each generated line, up to the last line with a token, then the end of the
+    /// stream. A line without tokens starts where the next line starts. 32 bytes for each line,
+    /// instead of 24 bytes for each token in a [`LookupTable`].
+    pub(crate) fn line_starts(&self) -> Vec<LineStart> {
+        if self.is_empty() {
+            return Vec::new();
+        }
+        let mut starts = Vec::with_capacity(self.last_dst_line() as usize + 2);
+        let mut state = State::default();
+        let mut pos = 0;
+        for index in 0..self.len {
+            let start = LineStart { pos: pos as u32, index, state };
+            let raw = read_raw(&self.bytes, &mut pos);
+            let token = step(&mut state, &raw);
+            // Lines without tokens are empty ranges.
+            while (starts.len() as u32) <= token.dst_line {
+                starts.push(start);
+            }
+        }
+        starts.push(LineStart { pos: pos as u32, index: self.len, state });
+        starts
+    }
+
+    /// Decode the tokens from `start` up to token index `end`, the start of the next line, into
+    /// `out`.
+    pub(crate) fn decode_line(&self, start: &LineStart, end: u32, out: &mut Vec<Token>) {
+        out.clear();
+        out.reserve((end - start.index) as usize);
+        let mut state = start.state;
+        let mut pos = start.pos as usize;
+        for _ in start.index..end {
+            let raw = read_raw(&self.bytes, &mut pos);
+            out.push(step(&mut state, &raw));
+        }
+    }
+}
+
 impl Iterator for MappingsIter<'_> {
     type Item = Token;
 
     #[inline]
     fn next(&mut self) -> Option<Token> {
         let raw = self.raw.next()?;
-        let state = &mut self.state;
-        if raw.tag & TAG_LINE != 0 {
-            state.dst_line = apply(state.dst_line, raw.dst_line);
-            state.dst_col = 0;
-        }
-        state.dst_col = apply(state.dst_col, raw.dst_col);
-
-        let mut token = Token::unmapped(state.dst_line, state.dst_col);
-        if raw.tag & TAG_MAPPED != 0 {
-            state.source_id = apply(state.source_id, raw.source_id);
-            state.src_line = apply(state.src_line, raw.src_line);
-            state.src_col = apply(state.src_col, raw.src_col);
-            token.source_id = state.source_id;
-            token.src_line = state.src_line;
-            token.src_col = state.src_col;
-        }
-        if raw.tag & TAG_NAMED != 0 {
-            state.name_id = apply(state.name_id, raw.name_id);
-            token.name_id = state.name_id;
-        }
-        Some(token)
+        Some(step(&mut self.state, &raw))
     }
 
     #[inline]

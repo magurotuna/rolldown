@@ -259,14 +259,14 @@ impl<'a> SourceMap<'a> {
 
     /// Create a [`LookupCursor`] for many lookups in this map.
     ///
-    /// The cursor builds its own lookup table and starts each search from its previous result
+    /// The cursor decodes the lines that the lookups need, not the whole map, and starts each search from its previous result
     /// when that cannot change the answer, so mostly-forward runs of lookups (such as tracing
     /// every token of another map through this one) are cheaper than calling
     /// [`lookup_token`](Self::lookup_token) or [`lookup_token_approx`](Self::lookup_token_approx)
     /// for each position. Results are identical to those methods when each line's tokens are
     /// sorted by generated column, which both assume.
-    pub fn lookup_cursor(&self) -> LookupCursor {
-        LookupCursor::new(self)
+    pub fn lookup_cursor(&self) -> LookupCursor<'_> {
+        LookupCursor::new(&self.mappings)
     }
 
     /// Lookup a token by line and column, it will used at remapping.

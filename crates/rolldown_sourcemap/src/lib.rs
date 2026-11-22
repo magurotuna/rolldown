@@ -417,7 +417,7 @@ fn remap_chain<const KEEP_POSITIONS: bool>(
 /// has one flag for each name and one more flag for the ids out of range.
 fn remap_tokens<const TRACK_NAMES: bool, const MARK_NAMES: bool, const KEEP_POSITIONS: bool>(
   last_map: &oxc_sourcemap::SourceMap<'_>,
-  chain: &mut [(LookupCursor, u32)],
+  chain: &mut [(LookupCursor<'_>, u32)],
   last_offset: u32,
   name_used: &mut [bool],
 ) -> Box<[Token]> {
