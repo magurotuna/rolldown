@@ -13,7 +13,18 @@ The binding uses mimalloc as the global allocator by default. The `jemalloc` car
 
 ## Measurements
 
-Linux VM (16 vCPU, 64 GiB, AMD EPYC, kernel 6.12, THP `always`). The values are medians of paired rounds. These measurements preloaded the system jemalloc 5.3.0 (`LD_PRELOAD`, so Node also used jemalloc) into a binding built with `default_global_allocator`, with the options above:
+Linux VM (16 vCPU, 64 GiB, AMD EPYC, kernel 6.12, THP `always`). The values are medians of 5 paired rounds.
+
+This feature, against mimalloc, with #11774 and #11801:
+
+| Project | Peak RSS (mimalloc) | Peak RSS change with the feature | Wall time change | CPU time change |
+|---|---:|---:|---:|---:|
+| Large React Router app (client and SSR builds, `build.sourcemap: true`, minify) | 16.9 GiB | −4.16 GiB | +2.8% | +2.2% to +4.4% |
+| [sourcemap-chain-bench](https://github.com/magurotuna/sourcemap-chain-bench) | 7.2 GiB | −0.73 GiB | +3.6% (−5.9% to +6.1%) | −1.0% to 0% |
+
+In the same rounds, the preloaded jemalloc (see below) lowered the peak more: −5.48 GiB and −0.82 GiB. With the feature, only the allocations of the binding use jemalloc. With the preloaded jemalloc, Node also uses jemalloc.
+
+These measurements preloaded the system jemalloc 5.3.0 (`LD_PRELOAD`, so Node also used jemalloc) into a binding built with `default_global_allocator`, with the options above:
 
 | Project | Peak RSS (mimalloc) | Peak RSS change with jemalloc | Build time change |
 |---|---:|---:|---:|
