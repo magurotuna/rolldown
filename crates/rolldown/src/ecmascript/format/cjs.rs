@@ -23,7 +23,7 @@ use super::utils::{render_chunk_directives, render_modules_with_peek_runtime_mod
 pub fn render_cjs<'code>(
   ctx: &GenerateContext<'_>,
   addon_render_context: AddonRenderContext<'code>,
-  module_sources: &'code RenderedModuleSources,
+  module_sources: &'code mut RenderedModuleSources,
 ) -> SourceJoiner<'code> {
   let mut source_joiner = SourceJoiner::default();
   let AddonRenderContext { hashbang, banner, intro, outro, footer, directives } =
